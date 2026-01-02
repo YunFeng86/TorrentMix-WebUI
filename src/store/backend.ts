@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, shallowRef } from 'vue'
 import type { BaseAdapter } from '@/adapter/interface'
+import type { Category, ServerState } from '@/adapter/types'
 
 /**
  * 后端全局 Store
@@ -13,6 +14,11 @@ import type { BaseAdapter } from '@/adapter/interface'
 export const useBackendStore = defineStore('backend', () => {
   const adapter = ref<BaseAdapter | null>(null)
   const backendType = ref<'qbit' | 'trans' | null>(null)
+
+  // 分类和标签存储（使用 shallowRef 优化性能）
+  const categories = shallowRef<Map<string, Category>>(new Map())
+  const tags = shallowRef<string[]>([])
+  const serverState = shallowRef<ServerState | null>(null)
 
   // 是否已初始化
   const isInitialized = computed(() => adapter.value !== null)
@@ -45,6 +51,28 @@ export const useBackendStore = defineStore('backend', () => {
   function clearAdapter() {
     adapter.value = null
     backendType.value = null
+    categories.value = new Map()
+    tags.value = []
+    serverState.value = null
+  }
+
+  /**
+   * 更新全局数据（分类、标签、服务器状态）
+   */
+  function updateGlobalData(data: {
+    categories?: Map<string, Category>
+    tags?: string[]
+    serverState?: ServerState | null
+  }) {
+    if (data.categories !== undefined) {
+      categories.value = new Map(data.categories)
+    }
+    if (data.tags !== undefined) {
+      tags.value = [...data.tags]
+    }
+    if (data.serverState !== undefined) {
+      serverState.value = data.serverState
+    }
   }
 
   return {
@@ -54,7 +82,11 @@ export const useBackendStore = defineStore('backend', () => {
     isQbit,
     isTrans,
     backendName,
+    categories,
+    tags,
+    serverState,
     setAdapter,
-    clearAdapter
+    clearAdapter,
+    updateGlobalData
   }
 })

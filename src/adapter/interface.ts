@@ -1,4 +1,18 @@
-import type { UnifiedTorrent } from './types'
+import type { UnifiedTorrent, Category, ServerState } from './types'
+
+/**
+ * fetchList 返回结果包装
+ */
+export interface FetchListResult {
+  /** 种子列表 */
+  torrents: Map<string, UnifiedTorrent>
+  /** 分类列表（可选，后端可能不支持） */
+  categories?: Map<string, Category>
+  /** 标签列表（可选，后端可能不支持） */
+  tags?: string[]
+  /** 服务器状态（可选，阶段 5 使用） */
+  serverState?: ServerState
+}
 
 /**
  * 添加种子参数
@@ -31,9 +45,9 @@ export interface AddTorrentParams {
 export interface BaseAdapter {
   /**
    * 获取种子列表
-   * @returns Map<string, UnifiedTorrent> - key 为种子 id
+   * @returns FetchListResult - 包含种子列表、分类、标签等
    */
-  fetchList(): Promise<Map<string, UnifiedTorrent>>
+  fetchList(): Promise<FetchListResult>
 
   /**
    * 添加种子

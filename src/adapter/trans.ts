@@ -1,5 +1,5 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter, AddTorrentParams } from './interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult } from './interface'
 import type { UnifiedTorrent, TorrentState } from './types'
 
 /**
@@ -69,7 +69,7 @@ const STATE_MAP: Record<number, TorrentState> = {
 export class TransAdapter implements BaseAdapter {
   private currentMap = new Map<string, UnifiedTorrent>()
 
-  async fetchList(): Promise<Map<string, UnifiedTorrent>> {
+  async fetchList(): Promise<FetchListResult> {
     const payload: TRRequest = {
       method: 'torrent-get',
       arguments: {
@@ -95,7 +95,14 @@ export class TransAdapter implements BaseAdapter {
     }
 
     this.currentMap = map
-    return this.currentMap
+
+    // Transmission 不支持分类和标签，返回空值
+    return {
+      torrents: this.currentMap,
+      categories: new Map(),  // TR 不支持分类
+      tags: [],               // TR 不支持标签（可用 labels 替代，暂不实现）
+      serverState: undefined  // 暂不实现 TR 的 server state
+    }
   }
 
   async pause(hashes: string[]): Promise<void> {

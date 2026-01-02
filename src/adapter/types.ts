@@ -30,6 +30,29 @@ export interface UnifiedTorrent {
   ratio: number;
   addedTime: number;   // unix timestamp
   savePath: string;
+  // 扩展字段
+  category?: string;
+  tags?: string[];
+}
+
+// 分类接口
+export interface Category {
+  name: string;
+  savePath: string;
+}
+
+// 服务器状态接口（阶段 5 使用，预留）
+export interface ServerState {
+  dlInfoSpeed: number;
+  upInfoSpeed: number;
+  dlRateLimit: number;
+  upRateLimit: number;
+  connectionStatus: 'connected' | 'disconnected';
+  peers: number;
+  freeSpaceOnDisk: number;
+  useAltSpeed: boolean;
+  altDlLimit: number;
+  altUpLimit: number;
 }
 
 // qBittorrent 原始响应类型
@@ -45,6 +68,8 @@ export interface QBTorrent {
   ratio: number;
   added_on: number;
   save_path: string;
+  category?: string;
+  tags?: string;
 }
 
 // qBittorrent sync/maindata 响应
@@ -53,9 +78,23 @@ export interface QBSyncResponse {
   full_update: boolean;
   torrents: Record<string, Partial<QBTorrent>>;
   torrents_removed: string[];
-  categories: Record<string, unknown>;
+  categories: Record<string, { savePath: string }>;
   categories_removed: string[];
   tags: string[];
   tags_removed: string[];
-  server_state: unknown;
+  server_state: QBServerState;
+}
+
+// qBittorrent server_state 结构
+export interface QBServerState {
+  dl_info_speed: number;
+  up_info_speed: number;
+  dl_rate_limit: number;
+  up_rate_limit: number;
+  connection_status: string;
+  peers: number;
+  free_space_on_disk: number;
+  use_alt_speed: boolean;
+  alt_dl_limit: number;
+  alt_up_limit: number;
 }

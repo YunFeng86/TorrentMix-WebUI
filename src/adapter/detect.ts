@@ -84,27 +84,15 @@ export async function detectBackend(
       throw new Error('Transmission not found')
     })
 
-  try {
-    // 并发探测，谁先响应就选谁
-    const result = await Promise.race([
-      qbitPromise,
-      transPromise,
-      // 两个都超时的情况
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Detection timeout')), timeout + 500)
-      )
-    ])
-    return result
-  } catch {
-    // 如果一个失败，尝试另一个
-    try {
-      return await qbitPromise
-    } catch {
-      try {
-        return await transPromise
-      } catch {
-        return 'unknown'
-      }
-    }
-  }
+  // 并发探测，qBittorrent 优先
+  // 理由：快速检测，同时避免之前 race 的误判问题
+  const results = await Promise.allSettled([qbitPromise, transPromise])
+
+  const qbitSuccess = results[0].status === 'fulfilled' && results[0].value === 'qbit'
+  const transSuccess = results[1].status === 'fulfilled' && results[1].value === 'trans'
+
+  // qBittorrent 优先（如果同时存在）
+  if (qbitSuccess) return 'qbit'
+  if (transSuccess) return 'trans'
+  return 'unknown'
 }

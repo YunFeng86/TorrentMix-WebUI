@@ -1,6 +1,6 @@
 import { apiClient, silentApiClient } from '@/api/client'
-import type { UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState } from './types'
-import type { BaseAdapter, AddTorrentParams } from './interface'
+import type { UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState, Category, ServerState } from './types'
+import type { BaseAdapter, AddTorrentParams, FetchListResult } from './interface'
 
 // 状态映射表 - qBittorrent 完整状态映射
 // 参考: https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(TorrentsManagement)
@@ -39,10 +39,12 @@ const STATE_MAP: Record<string, TorrentState> = {
 export class QbitAdapter implements BaseAdapter {
   private rid = 0
   private currentMap = new Map<string, UnifiedTorrent>()
+  private currentCategories = new Map<string, Category>()
+  private currentTags: string[] = []
   private consecutiveErrors = 0  // 连续错误计数，用于检测 RID 失效
 
   // 获取种子列表（使用 sync/maindata 增量更新）
-  async fetchList(): Promise<Map<string, UnifiedTorrent>> {
+  async fetchList(): Promise<FetchListResult> {
     try {
       const { data } = await apiClient.get<QBSyncResponse>('/api/v2/sync/maindata', {
         params: { rid: this.rid }
@@ -72,7 +74,31 @@ export class QbitAdapter implements BaseAdapter {
         }
       }
 
-      return this.currentMap
+      // 更新分类（增量）
+      for (const [name, cat] of Object.entries(data.categories || {})) {
+        this.currentCategories.set(name, { name, savePath: cat.savePath })
+      }
+      for (const name of data.categories_removed || []) {
+        this.currentCategories.delete(name)
+      }
+
+      // 更新标签（增量）
+      const tagSet = new Set(this.currentTags)
+      for (const tag of data.tags || []) {
+        tagSet.add(tag)
+      }
+      for (const tag of data.tags_removed || []) {
+        tagSet.delete(tag)
+      }
+      this.currentTags = Array.from(tagSet)
+
+      // 构造返回结果
+      return {
+        torrents: this.currentMap,
+        categories: new Map(this.currentCategories),
+        tags: [...this.currentTags],
+        serverState: this.normalizeServerState(data.server_state)
+      }
     } catch (error) {
       this.consecutiveErrors++
 
@@ -95,7 +121,23 @@ export class QbitAdapter implements BaseAdapter {
             map.set(hash, this.normalize(hash, torrent))
           }
           this.currentMap = map
-          return this.currentMap
+
+          // 重新提取分类和标签
+          const categories = new Map<string, Category>()
+          for (const [name, cat] of Object.entries(data.categories || {})) {
+            categories.set(name, { name, savePath: cat.savePath })
+          }
+          this.currentCategories = categories
+
+          const tags = data.tags || []
+          this.currentTags = tags
+
+          return {
+            torrents: this.currentMap,
+            categories,
+            tags,
+            serverState: this.normalizeServerState(data.server_state)
+          }
         } catch (retryError) {
           console.error('[QbitAdapter] RID 重置后重试失败', retryError)
           throw retryError
@@ -103,6 +145,25 @@ export class QbitAdapter implements BaseAdapter {
       }
 
       throw error
+    }
+  }
+
+  // 归一化服务器状态
+  private normalizeServerState(raw: unknown): ServerState | undefined {
+    if (!raw || typeof raw !== 'object') return undefined
+
+    const state = raw as Record<string, unknown>
+    return {
+      dlInfoSpeed: (state.dl_info_speed as number) ?? 0,
+      upInfoSpeed: (state.up_info_speed as number) ?? 0,
+      dlRateLimit: (state.dl_rate_limit as number) ?? 0,
+      upRateLimit: (state.up_rate_limit as number) ?? 0,
+      connectionStatus: (state.connection_status as string) === 'connected' ? 'connected' : 'disconnected',
+      peers: (state.peers as number) ?? 0,
+      freeSpaceOnDisk: (state.free_space_on_disk as number) ?? 0,
+      useAltSpeed: (state.use_alt_speed as boolean) ?? false,
+      altDlLimit: (state.alt_dl_limit as number) ?? 0,
+      altUpLimit: (state.alt_up_limit as number) ?? 0
     }
   }
 
@@ -228,7 +289,10 @@ export class QbitAdapter implements BaseAdapter {
       eta: raw.eta ?? existing?.eta ?? -1,
       ratio: raw.ratio ?? existing?.ratio ?? 0,
       addedTime: raw.added_on ?? existing?.addedTime ?? 0,
-      savePath: raw.save_path ?? existing?.savePath ?? ''
+      savePath: raw.save_path ?? existing?.savePath ?? '',
+      // 分类和标签（qB 的 tags 是逗号分隔的字符串，需要转数组）
+      category: raw.category || existing?.category,
+      tags: raw.tags ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : existing?.tags
     }
   }
 }

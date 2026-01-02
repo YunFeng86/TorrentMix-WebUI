@@ -61,7 +61,9 @@ const handleResize = () => {
 }
 
 // 过滤器
-const stateFilter = ref<'all' | 'downloading' | 'seeding' | 'paused' | 'checking'>('all')
+const stateFilter = ref<'all' | 'downloading' | 'seeding' | 'paused' | 'checking' | 'queued' | 'error'>('all')
+const categoryFilter = ref<string>('all')
+const tagFilter = ref<string>('all')
 
 // 统计数据 - 一次遍历完成所有统计（Good Taste：消除不必要的多次遍历）
 const stats = computed(() => {
@@ -108,6 +110,28 @@ const filteredTorrents = computed(() => {
     result = filtered
   }
 
+  // 分类过滤
+  if (categoryFilter.value !== 'all') {
+    const filtered = new Map<string, UnifiedTorrent>()
+    for (const [hash, torrent] of result) {
+      if (torrent.category === categoryFilter.value) {
+        filtered.set(hash, torrent)
+      }
+    }
+    result = filtered
+  }
+
+  // 标签过滤
+  if (tagFilter.value !== 'all') {
+    const filtered = new Map<string, UnifiedTorrent>()
+    for (const [hash, torrent] of result) {
+      if (torrent.tags?.includes(tagFilter.value)) {
+        filtered.set(hash, torrent)
+      }
+    }
+    result = filtered
+  }
+
   // 搜索过滤（使用防抖后的搜索词）
   if (debouncedSearchQuery.value) {
     const query = debouncedSearchQuery.value.toLowerCase()
@@ -140,8 +164,14 @@ const useVirtualScroll = computed(() => sortedTorrents.value.length >= VIRTUAL_S
 // 立即刷新函数（操作后调用）
 async function immediateRefresh() {
   try {
-    const data = await adapter.value.fetchList()
-    torrentStore.updateTorrents(data)
+    const result = await adapter.value.fetchList()
+    torrentStore.updateTorrents(result.torrents)
+    // 更新全局数据（分类、标签、服务器状态）
+    backendStore.updateGlobalData({
+      categories: result.categories,
+      tags: result.tags,
+      serverState: result.serverState
+    })
   } catch (error) {
     console.error('[Dashboard] Refresh failed:', error)
   }
@@ -150,8 +180,14 @@ async function immediateRefresh() {
 // 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听 + 致命错误处理）
 const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
   fn: async () => {
-    const data = await adapter.value.fetchList()
-    torrentStore.updateTorrents(data)
+    const result = await adapter.value.fetchList()
+    torrentStore.updateTorrents(result.torrents)
+    // 更新全局数据（分类、标签、服务器状态）
+    backendStore.updateGlobalData({
+      categories: result.categories,
+      tags: result.tags,
+      serverState: result.serverState
+    })
   },
   // 遇到 403 立即跳转登录
   onFatalError: (error) => {
@@ -414,6 +450,52 @@ onUnmounted(() => {
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">检查中</span>
               <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'checking' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.checking }}</span>
             </button>
+
+            <button @click="stateFilter = 'queued'"
+                    :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'queued' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
+              <Icon name="clock" color="orange" :size="16" />
+              <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">队列中</span>
+            </button>
+
+            <button @click="stateFilter = 'error'"
+                    :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'error' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
+              <Icon name="alert-circle" color="red" :size="16" />
+              <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">错误</span>
+            </button>
+          </div>
+
+          <!-- 分类筛选 (qB only) -->
+          <div v-if="backendStore.isQbit && backendStore.categories.size > 0" :class="`mt-4 ${sidebarCollapsed ? 'hidden' : ''}`">
+            <h3 :class="`text-xs font-medium text-gray-500 uppercase tracking-wider px-3 mb-2`">分类</h3>
+            <div class="space-y-1">
+              <button @click="categoryFilter = 'all'"
+                      :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${categoryFilter === 'all' ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-100'}`">
+                <Icon name="folder" :size="14" />
+                <span class="truncate text-sm">全部分类</span>
+              </button>
+              <button v-for="cat in Array.from(backendStore.categories.values())" :key="cat.name"
+                      @click="categoryFilter = cat.name"
+                      :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${categoryFilter === cat.name ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-100'}`">
+                <Icon name="folder" :size="14" />
+                <span class="truncate text-sm">{{ cat.name }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 标签筛选 (qB only) -->
+          <div v-if="backendStore.isQbit && backendStore.tags.length > 0" :class="`mt-4 ${sidebarCollapsed ? 'hidden' : ''}`">
+            <h3 :class="`text-xs font-medium text-gray-500 uppercase tracking-wider px-3 mb-2`">标签</h3>
+            <div class="flex flex-wrap gap-2 px-3">
+              <button @click="tagFilter = 'all'"
+                      :class="`px-2 py-1 rounded text-xs font-medium transition-colors ${tagFilter === 'all' ? 'bg-black text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`">
+                全部
+              </button>
+              <button v-for="tag in backendStore.tags" :key="tag"
+                      @click="tagFilter = tag"
+                      :class="`px-2 py-1 rounded text-xs font-medium transition-colors ${tagFilter === tag ? 'bg-black text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`">
+                {{ tag }}
+              </button>
+            </div>
           </div>
         </nav>
 

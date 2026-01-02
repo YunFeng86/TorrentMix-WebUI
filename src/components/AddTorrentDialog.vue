@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import type { AddTorrentParams } from '@/adapter/interface'
+import { useBackendStore } from '@/store/backend'
 import Icon from '@/components/Icon.vue'
 
 interface Props {
@@ -15,12 +16,37 @@ interface Emits {
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
+const backendStore = useBackendStore()
+
 // 表单状态
 const activeTab = ref<'url' | 'file'>('url')
 const urlText = ref('')
 const selectedFiles = ref<File[]>([])
 const savePath = ref('')
 const paused = ref(false)
+const category = ref('')
+const tags = ref<string[]>([])
+const tagInput = ref('')
+
+// 可用分类列表（qB only）
+const availableCategories = computed(() =>
+  Array.from(backendStore.categories.values()).map(c => c.name)
+)
+
+// 处理标签输入
+function handleTagInput(e: KeyboardEvent) {
+  if (e.key === 'Enter' && tagInput.value.trim()) {
+    const newTag = tagInput.value.trim()
+    if (!tags.value.includes(newTag)) {
+      tags.value.push(newTag)
+    }
+    tagInput.value = ''
+  }
+}
+
+function removeTag(index: number) {
+  tags.value.splice(index, 1)
+}
 
 // 文件选择处理
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -47,6 +73,9 @@ function reset() {
   selectedFiles.value = []
   savePath.value = ''
   paused.value = false
+  category.value = ''
+  tags.value = []
+  tagInput.value = ''
   if (fileInput.value) {
     fileInput.value.value = ''
   }
@@ -74,6 +103,12 @@ async function handleSubmit() {
   }
   if (paused.value) {
     params.paused = true
+  }
+  if (category.value.trim()) {
+    params.category = category.value.trim()
+  }
+  if (tags.value.length > 0) {
+    params.tags = tags.value
   }
 
   emit('add', params)
@@ -207,6 +242,53 @@ async function handleSubmit() {
 
               <!-- 选项 -->
               <div class="mt-6 space-y-4 pt-6 border-t border-gray-200">
+                <!-- 分类选择 (qB only) -->
+                <div v-if="backendStore.isQbit">
+                  <label class="block text-sm font-medium text-gray-700 mb-1">
+                    分类（可选）
+                  </label>
+                  <select
+                    v-model="category"
+                    class="input w-full"
+                  >
+                    <option value="">默认分类</option>
+                    <option v-for="cat in availableCategories" :key="cat" :value="cat">
+                      {{ cat }}
+                    </option>
+                  </select>
+                </div>
+
+                <!-- 标签输入 (qB only) -->
+                <div v-if="backendStore.isQbit">
+                  <label class="block text-sm font-medium text-gray-700 mb-1">
+                    标签（可选）
+                  </label>
+                  <div class="space-y-2">
+                    <div class="flex flex-wrap gap-2">
+                      <span
+                        v-for="(tag, index) in tags"
+                        :key="index"
+                        class="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm"
+                      >
+                        {{ tag }}
+                        <button
+                          @click="removeTag(index)"
+                          class="hover:text-red-500 transition-colors"
+                        >
+                          <Icon name="x" :size="14" />
+                        </button>
+                      </span>
+                    </div>
+                    <input
+                      v-model="tagInput"
+                      @keydown="handleTagInput"
+                      type="text"
+                      class="input w-full"
+                      placeholder="输入标签后按回车添加"
+                    />
+                  </div>
+                </div>
+
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     保存路径（可选）
