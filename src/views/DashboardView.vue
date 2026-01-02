@@ -598,7 +598,7 @@ onUnmounted(() => {
 
         <!-- 桌面端侧边栏头部 -->
         <div v-else class="p-4 border-b border-gray-200 flex items-center justify-between">
-          <h2 :class="`font-medium text-gray-900 ${sidebarCollapsed ? 'hidden' : ''}`">筛选</h2>
+          <h2 :class="`font-medium text-gray-900 ${sidebarCollapsed ? 'hidden' : ''}`">TorrentMix UI</h2>
           <button @click="sidebarCollapsed = !sidebarCollapsed" class="btn p-2 hover:bg-gray-100">
             <Icon name="chevron-left" :size="16" :class="{ 'rotate-180': sidebarCollapsed }" />
           </button>
