@@ -1,6 +1,8 @@
 import axios from 'axios'
 
 function getConfiguredQbitBaseUrl(): string {
+  // 开发环境走 Vite 代理，baseURL 留空
+  if (import.meta.env.DEV) return ''
   return (import.meta.env.VITE_QB_URL ?? '').trim()
 }
 

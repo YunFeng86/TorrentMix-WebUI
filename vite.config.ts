@@ -12,9 +12,17 @@ export default defineConfig({
   },
   server: {
     proxy: {
+      // qBittorrent WebAPI
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true
+      },
+      // Transmission RPC
+      '/transmission': {
+        target: 'http://localhost:9091',
+        changeOrigin: true,
+        // 不重写路径，因为 trans-client 直接请求 /transmission/rpc
+        rewrite: undefined
       }
     }
   }

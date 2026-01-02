@@ -11,8 +11,11 @@ import axios from 'axios'
 // Session ID 存储（按实例作用域隔离）
 let sessionId = ''
 
+// 开发环境走 Vite 代理，baseURL 留空
+const baseURL = import.meta.env.DEV ? '' : (import.meta.env.VITE_TR_URL || 'http://localhost:9091/transmission/rpc')
+
 export const transClient = axios.create({
-  baseURL: import.meta.env.VITE_TR_URL || 'http://localhost:9091/transmission/rpc',
+  baseURL,
   timeout: 10000,
   headers: {
     'Content-Type': 'application/json'

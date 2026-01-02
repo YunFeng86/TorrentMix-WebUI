@@ -1,6 +1,26 @@
 import type { UnifiedTorrent } from './types'
 
 /**
+ * 添加种子参数
+ */
+export interface AddTorrentParams {
+  /** Magnet 链接或 HTTP URL（多个用换行分隔） */
+  urls?: string
+  /** .torrent 文件 */
+  files?: File[]
+  /** 保存路径（可选） */
+  savepath?: string
+  /** 分类（可选） */
+  category?: string
+  /** 标签（可选） */
+  tags?: string[]
+  /** 添加后暂停（默认 false）*/
+  paused?: boolean
+  /** 种子哈希（用于跳过重复检测，可选）*/
+  skip_checking?: boolean
+}
+
+/**
  * BaseAdapter 接口 - 定义所有后端适配器必须实现的方法
  *
  * 设计原则：
@@ -14,6 +34,12 @@ export interface BaseAdapter {
    * @returns Map<string, UnifiedTorrent> - key 为种子 id
    */
   fetchList(): Promise<Map<string, UnifiedTorrent>>
+
+  /**
+   * 添加种子
+   * @param params - 添加种子参数
+   */
+  addTorrent(params: AddTorrentParams): Promise<void>
 
   /**
    * 暂停种子

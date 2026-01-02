@@ -1,5 +1,5 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter } from './interface'
+import type { BaseAdapter, AddTorrentParams } from './interface'
 import type { UnifiedTorrent, TorrentState } from './types'
 
 /**
@@ -126,6 +126,48 @@ export class TransAdapter implements BaseAdapter {
       }
     }
     await transClient.post('', payload)
+  }
+
+  async addTorrent(params: AddTorrentParams): Promise<void> {
+    // Transmission 支持 magnet 和 .torrent 文件（需要 base64 编码）
+    const args: Record<string, unknown> = {}
+
+    if (params.paused !== undefined) {
+      args['paused'] = params.paused
+    }
+    if (params.savepath) {
+      args['download-dir'] = params.savepath
+    }
+
+    // 处理 magnet 链接
+    if (params.urls?.trim()) {
+      const urls = params.urls.trim().split('\n').filter(u => u)
+      for (const url of urls) {
+        if (url.startsWith('magnet:')) {
+          args['filename'] = url
+          const payload: TRRequest = {
+            method: 'torrent-add',
+            arguments: args
+          }
+          await transClient.post('', payload)
+        }
+      }
+    }
+
+    // 处理 .torrent 文件（需要读取并转为 base64）
+    if (params.files && params.files.length > 0) {
+      for (const file of params.files) {
+        const arrayBuffer = await file.arrayBuffer()
+        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+        args['metainfo'] = base64
+
+        const payload: TRRequest = {
+          method: 'torrent-add',
+          arguments: { ...args }
+        }
+        await transClient.post('', payload)
+      }
+    }
   }
 
   /**

@@ -1,13 +1,20 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
+import { useDebounceFn } from '@vueuse/core'
 import { useTorrentStore } from '@/store/torrent'
 import { useAuthStore } from '@/store/auth'
 import { useBackendStore } from '@/store/backend'
 import { usePolling } from '@/composables/usePolling'
 import type { UnifiedTorrent } from '@/adapter/types'
+import type { AddTorrentParams } from '@/adapter/interface'
 import TorrentRow from '@/components/torrent/TorrentRow.vue'
 import TorrentCard from '@/components/torrent/TorrentCard.vue'
+import AddTorrentDialog from '@/components/AddTorrentDialog.vue'
+import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
 import { formatSpeed } from '@/utils/format'
+
+// 虚拟滚动阈值：超过 500 个种子时启用虚拟滚动
+const VIRTUAL_SCROLL_THRESHOLD = 500
 
 const torrentStore = useTorrentStore()
 const authStore = useAuthStore()
@@ -23,8 +30,22 @@ if (!backendStore.isInitialized) {
 
 const selectedHashes = ref<Set<string>>(new Set())
 const searchQuery = ref('')
+const debouncedSearchQuery = ref('')  // 用于过滤的实际搜索词（防抖后）
 const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
+
+// 搜索防抖：300ms 后才更新过滤条件
+const updateSearch = useDebounceFn((value: string) => {
+  debouncedSearchQuery.value = value
+}, 300)
+
+// 监听搜索输入
+watch(searchQuery, (val) => updateSearch(val))
+
+// 添加种子对话框
+const showAddDialog = ref(false)
+const addLoading = ref(false)
+const addError = ref('')
 
 // 监听屏幕尺寸变化
 const handleResize = () => {
@@ -83,9 +104,9 @@ const filteredTorrents = computed(() => {
     result = filtered
   }
 
-  // 搜索过滤
-  if (searchQuery.value) {
-    const query = searchQuery.value.toLowerCase()
+  // 搜索过滤（使用防抖后的搜索词）
+  if (debouncedSearchQuery.value) {
+    const query = debouncedSearchQuery.value.toLowerCase()
     const filtered = new Map<string, UnifiedTorrent>()
     for (const [hash, torrent] of result) {
       if (torrent.name.toLowerCase().includes(query)) {
@@ -108,6 +129,9 @@ const sortedTorrents = computed(() => {
     return a.name.localeCompare(b.name)
   })
 })
+
+// 是否使用虚拟滚动（超过阈值时启用）
+const useVirtualScroll = computed(() => sortedTorrents.value.length >= VIRTUAL_SCROLL_THRESHOLD)
 
 // 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听）
 const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
@@ -197,6 +221,25 @@ async function handleDelete() {
 async function logout() {
   await authStore.logout()
   window.location.href = '/login'
+}
+
+// 添加种子
+async function handleAddTorrent(params: AddTorrentParams) {
+  addLoading.value = true
+  addError.value = ''
+  try {
+    await adapter.value.addTorrent(params)
+    showAddDialog.value = false
+    // 添加成功后稍等片刻让种子出现在列表中
+    setTimeout(() => {
+      // 轮询会自动刷新列表
+    }, 500)
+  } catch (err) {
+    console.error('[Dashboard] Failed to add torrent:', err)
+    addError.value = err instanceof Error ? err.message : '添加种子失败'
+  } finally {
+    addLoading.value = false
+  }
 }
 
 onMounted(() => {
@@ -399,6 +442,15 @@ onUnmounted(() => {
         <div class="border-b border-gray-200 px-4 py-3 flex items-center gap-4 shrink-0">
           <!-- 操作按钮组 -->
           <div class="flex gap-1">
+            <!-- 添加种子按钮 -->
+            <button @click="showAddDialog = true"
+                    class="btn p-2 bg-black text-white hover:bg-gray-800 transition-all duration-150"
+                    title="添加种子">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+
             <button @click="handleResume"
                     :disabled="selectedHashes.size === 0"
                     class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
@@ -455,8 +507,43 @@ onUnmounted(() => {
         <!-- 种子列表 -->
         <div class="flex-1 overflow-auto">
           <!-- 桌面端表格视图 -->
-          <div class="hidden md:block">
-            <table class="w-full">
+          <div class="hidden md:block h-full">
+            <!-- 虚拟滚动（大量种子时） -->
+            <div v-if="useVirtualScroll" class="h-full flex flex-col">
+              <table class="w-full">
+                <thead class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0">
+                  <tr class="text-xs text-gray-600 uppercase tracking-wide">
+                    <th class="text-left px-3 py-3 font-medium w-12"></th>
+                    <th class="text-left px-3 py-3 font-medium">种子</th>
+                    <th class="text-left px-3 py-3 font-medium w-32">进度</th>
+                    <th class="text-right px-3 py-3 font-medium w-20">下载</th>
+                    <th class="text-right px-3 py-3 font-medium w-20 hidden md:table-cell">上传</th>
+                    <th class="text-right px-3 py-3 font-medium w-20 hidden lg:table-cell">剩余</th>
+                    <th class="text-right px-3 py-3 font-medium w-16"></th>
+                  </tr>
+                </thead>
+              </table>
+              <VirtualTorrentList
+                v-if="sortedTorrents.length > 0"
+                :torrents="sortedTorrents"
+                :selected-hashes="selectedHashes"
+                @click="toggleSelect"
+              />
+              <div v-else class="px-4 py-16 text-center">
+                <div class="flex flex-col items-center gap-4">
+                  <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2h4a1 1 0 011 1v2a1 1 0 01-1 1h-1v12a2 2 0 01-2 2H6a2 2 0 01-2-2V8H3a1 1 0 01-1-1V5a1 1 0 011-1h4zM9 6h6V4H9v2z" />
+                  </svg>
+                  <div class="text-gray-500">
+                    <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
+                    <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 普通表格（少量种子时） -->
+            <table v-else class="w-full">
               <thead class="sticky top-0 bg-gray-100 border-b border-gray-200">
                 <tr class="text-xs text-gray-600 uppercase tracking-wide">
                   <th class="text-left px-3 py-3 font-medium w-12"></th>
@@ -532,5 +619,12 @@ onUnmounted(() => {
         </div>
       </main>
     </div>
+
+    <!-- 添加种子对话框 -->
+    <AddTorrentDialog
+      :open="showAddDialog"
+      @close="showAddDialog = false"
+      @add="handleAddTorrent"
+    />
   </div>
 </template>

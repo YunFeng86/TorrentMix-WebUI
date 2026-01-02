@@ -1,6 +1,6 @@
 import { apiClient } from '@/api/client'
 import type { UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState } from './types'
-import type { BaseAdapter } from './interface'
+import type { BaseAdapter, AddTorrentParams } from './interface'
 
 // 状态映射表 - qBittorrent 完整状态映射
 // 参考: https://github.com/qbittorrent/qBittorrent/wiki/WebUI-API-(TorrentsManagement)
@@ -126,6 +126,46 @@ export class QbitAdapter implements BaseAdapter {
       params: {
         hashes: hashes.join('|') || 'all',
         deleteFiles: deleteFiles.toString()
+      }
+    })
+  }
+
+  // 添加种子
+  async addTorrent(params: AddTorrentParams): Promise<void> {
+    const formData = new FormData()
+
+    // 处理 URLs（magnet 链接或 HTTP 链接）
+    if (params.urls?.trim()) {
+      formData.append('urls', params.urls.trim())
+    }
+
+    // 处理 .torrent 文件
+    if (params.files && params.files.length > 0) {
+      for (const file of params.files) {
+        formData.append('torrents', file)
+      }
+    }
+
+    // 可选参数
+    if (params.savepath) {
+      formData.append('savepath', params.savepath)
+    }
+    if (params.category) {
+      formData.append('category', params.category)
+    }
+    if (params.tags && params.tags.length > 0) {
+      formData.append('tags', params.tags.join(','))
+    }
+    if (params.paused) {
+      formData.append('paused', 'true')
+    }
+    if (params.skip_checking) {
+      formData.append('skip_checking', 'true')
+    }
+
+    await apiClient.post('/api/v2/torrents/add', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data'
       }
     })
   }
