@@ -11,6 +11,7 @@ import TorrentRow from '@/components/torrent/TorrentRow.vue'
 import TorrentCard from '@/components/torrent/TorrentCard.vue'
 import AddTorrentDialog from '@/components/AddTorrentDialog.vue'
 import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
+import Icon from '@/components/Icon.vue'
 import { formatSpeed } from '@/utils/format'
 
 // 虚拟滚动阈值：超过 500 个种子时启用虚拟滚动
@@ -259,22 +260,18 @@ onUnmounted(() => {
     <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shrink-0">
       <div class="flex items-center gap-4">
         <!-- 移动端菜单按钮 -->
-        <button 
-          v-if="isMobile" 
-          @click="sidebarCollapsed = false" 
+        <button
+          v-if="isMobile"
+          @click="sidebarCollapsed = false"
           class="btn p-2 hover:bg-gray-100 md:hidden"
         >
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
+          <Icon name="menu" :size="20" />
         </button>
 
         <!-- Logo -->
         <div class="flex items-center gap-3">
           <div class="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-            <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12" />
-            </svg>
+            <Icon name="download-cloud" color="white" :size="20" class="text-white" />
           </div>
           <div class="hidden sm:block">
             <h1 class="text-base font-semibold text-gray-900">种子管理</h1>
@@ -301,15 +298,11 @@ onUnmounted(() => {
       <div class="flex items-center gap-6">
         <div class="hidden md:flex items-center gap-4">
           <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12" />
-            </svg>
+            <Icon name="download" color="blue" :size="16" />
             <span class="text-sm font-mono text-gray-900">{{ formatSpeed(stats.dlSpeed) }}</span>
           </div>
           <div class="flex items-center gap-2">
-            <svg class="w-4 h-4 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
+            <Icon name="upload-cloud" color="cyan" :size="16" />
             <span class="text-sm font-mono text-gray-900">{{ formatSpeed(stats.upSpeed) }}</span>
           </div>
         </div>
@@ -327,9 +320,7 @@ onUnmounted(() => {
         </div>
 
         <button @click="logout" class="btn text-gray-600 hover:text-gray-900">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-          </svg>
+          <Icon name="log-out" :size="16" />
         </button>
       </div>
     </header>
@@ -337,16 +328,16 @@ onUnmounted(() => {
     <!-- 主内容区 -->
     <div class="flex-1 flex overflow-hidden relative">
       <!-- 移动端遮罩层 -->
-      <div 
-        v-if="!sidebarCollapsed && isMobile" 
+      <div
+        v-if="!sidebarCollapsed && isMobile"
         @click="sidebarCollapsed = true"
         class="fixed inset-0 bg-black/50 z-40 md:hidden"
       ></div>
 
       <!-- 左侧边栏 -->
-      <aside 
+      <aside
         :class="`bg-white border-r border-gray-200 flex flex-col shrink-0 transition-all duration-300 z-50
-        ${isMobile 
+        ${isMobile
           ? (sidebarCollapsed ? '-translate-x-full w-64 fixed left-0 top-0 h-full' : 'translate-x-0 w-64 fixed left-0 top-0 h-full')
           : (sidebarCollapsed ? 'w-16' : 'w-64')
         }`"
@@ -355,9 +346,7 @@ onUnmounted(() => {
         <div v-if="isMobile" class="p-4 border-b border-gray-200 flex items-center justify-between">
           <h2 class="font-medium text-gray-900">筛选</h2>
           <button @click="sidebarCollapsed = true" class="btn p-2 hover:bg-gray-100">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <Icon name="x" :size="16" />
           </button>
         </div>
 
@@ -365,9 +354,7 @@ onUnmounted(() => {
         <div v-else class="p-4 border-b border-gray-200 flex items-center justify-between">
           <h2 :class="`font-medium text-gray-900 ${sidebarCollapsed ? 'hidden' : ''}`">筛选</h2>
           <button @click="sidebarCollapsed = !sidebarCollapsed" class="btn p-2 hover:bg-gray-100">
-            <svg class="w-4 h-4" :class="{ 'rotate-180': sidebarCollapsed }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
+            <Icon name="chevron-left" :size="16" :class="{ 'rotate-180': sidebarCollapsed }" />
           </button>
         </div>
 
@@ -376,45 +363,35 @@ onUnmounted(() => {
           <div class="space-y-1">
             <button @click="stateFilter = 'all'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'all' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
-              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-              </svg>
+              <Icon name="list" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">全部</span>
               <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.total }}</span>
             </button>
 
             <button @click="stateFilter = 'downloading'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'downloading' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
-              <svg class="w-4 h-4 shrink-0 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12" />
-              </svg>
+              <Icon name="download" color="blue" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">下载中</span>
               <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'downloading' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.downloading }}</span>
             </button>
 
             <button @click="stateFilter = 'seeding'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'seeding' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
-              <svg class="w-4 h-4 shrink-0 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
+              <Icon name="upload-cloud" color="cyan" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">做种中</span>
               <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'seeding' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.seeding }}</span>
             </button>
 
             <button @click="stateFilter = 'paused'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'paused' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
-              <svg class="w-4 h-4 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <Icon name="pause-circle" color="gray" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">已暂停</span>
               <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'paused' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.paused }}</span>
             </button>
 
             <button @click="stateFilter = 'checking'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'checking' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
-              <svg class="w-4 h-4 shrink-0 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
+              <Icon name="refresh-cw" color="purple" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">检查中</span>
               <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'checking' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.checking }}</span>
             </button>
@@ -446,35 +423,27 @@ onUnmounted(() => {
             <button @click="showAddDialog = true"
                     class="btn p-2 bg-black text-white hover:bg-gray-800 transition-all duration-150"
                     title="添加种子">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-              </svg>
+              <Icon name="plus" :size="16" />
             </button>
 
             <button @click="handleResume"
                     :disabled="selectedHashes.size === 0"
                     class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
                     title="开始">
-              <svg class="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h1m4 0h1m-6 4h1m4 0h1m6-10V9a3 3 0 01-3 3h-4m-4 0H7a3 3 0 01-3-3V4a3 3 0 013-3h4a3 3 0 013 3v1" />
-              </svg>
+              <Icon name="play" color="blue" :size="16" />
             </button>
             <button @click="handlePause"
                     :disabled="selectedHashes.size === 0"
                     class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
                     title="暂停">
-              <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
+              <Icon name="pause" color="gray" :size="16" />
             </button>
             <div class="w-px h-8 bg-gray-200 mx-2"></div>
             <button @click="handleDelete"
                     :disabled="selectedHashes.size === 0"
                     class="btn-destructive p-2 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
                     title="删除">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-              </svg>
+              <Icon name="trash-2" color="white" :size="16" />
             </button>
           </div>
 
@@ -491,9 +460,7 @@ onUnmounted(() => {
           <!-- 搜索框 -->
           <div class="flex-1 max-w-md ml-auto">
             <div class="relative">
-              <svg class="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
+              <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
               <input
                 v-model="searchQuery"
                 type="text"
@@ -531,9 +498,7 @@ onUnmounted(() => {
               />
               <div v-else class="px-4 py-16 text-center">
                 <div class="flex flex-col items-center gap-4">
-                  <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2h4a1 1 0 011 1v2a1 1 0 01-1 1h-1v12a2 2 0 01-2 2H6a2 2 0 01-2-2V8H3a1 1 0 01-1-1V5a1 1 0 011-1h4zM9 6h6V4H9v2z" />
-                  </svg>
+                  <Icon name="inbox" :size="48" class="text-gray-300" />
                   <div class="text-gray-500">
                     <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
                     <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
@@ -559,9 +524,7 @@ onUnmounted(() => {
                 <tr v-if="sortedTorrents.length === 0">
                   <td colspan="7" class="px-4 py-16 text-center">
                     <div class="flex flex-col items-center gap-4">
-                      <svg class="w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2h4a1 1 0 011 1v2a1 1 0 01-1 1h-1v12a2 2 0 01-2 2H6a2 2 0 01-2-2V8H3a1 1 0 01-1-1V5a1 1 0 011-1h4zM9 6h6V4H9v2z" />
-                      </svg>
+                      <Icon name="inbox" :size="48" class="text-gray-300" />
                       <div class="text-gray-500">
                         <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
                         <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
@@ -584,15 +547,13 @@ onUnmounted(() => {
           <div class="md:hidden p-4">
             <!-- 空状态 -->
             <div v-if="sortedTorrents.length === 0" class="text-center py-16">
-              <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2h4a1 1 0 011 1v2a1 1 0 01-1 1h-1v12a2 2 0 01-2 2H6a2 2 0 01-2-2V8H3a1 1 0 01-1-1V5a1 1 0 011-1h4zM9 6h6V4H9v2z" />
-              </svg>
+              <Icon name="inbox" :size="64" class="text-gray-300 mx-auto mb-4" />
               <div class="text-gray-500">
                 <p class="font-medium text-base">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
                 <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
               </div>
             </div>
-            
+
             <!-- 卡片网格 -->
             <div class="space-y-3">
               <TorrentCard

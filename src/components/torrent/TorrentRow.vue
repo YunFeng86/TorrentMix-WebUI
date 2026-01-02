@@ -1,35 +1,23 @@
 <script setup lang="ts">
 import type { UnifiedTorrent } from '@/adapter/types'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
+import Icon from '@/components/Icon.vue'
 
 defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
 
 type TorrentState = UnifiedTorrent['state']
 
-// 状态图标组件
-const getStateIcon = (state: TorrentState) => {
-  const icons: Record<TorrentState, string> = {
-    downloading: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12',
-    seeding: 'M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12',
-    paused: 'M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z',
-    queued: 'M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z',
-    checking: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
-    error: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z'
+// 状态图标映射
+const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cyan' | 'gray' | 'orange' | 'purple' | 'red' } => {
+  const icons: Record<TorrentState, { name: string; color: 'blue' | 'cyan' | 'gray' | 'orange' | 'purple' | 'red' }> = {
+    downloading: { name: 'download', color: 'blue' },
+    seeding: { name: 'upload-cloud', color: 'cyan' },
+    paused: { name: 'pause-circle', color: 'gray' },
+    queued: { name: 'clock', color: 'orange' },
+    checking: { name: 'refresh-cw', color: 'purple' },
+    error: { name: 'alert-circle', color: 'red' }
   }
   return icons[state]
-}
-
-// 状态颜色
-const getStateColor = (state: TorrentState) => {
-  const colors: Record<TorrentState, string> = {
-    downloading: 'text-blue-500',
-    seeding: 'text-cyan-500',
-    paused: 'text-gray-400',
-    queued: 'text-orange-500',
-    checking: 'text-purple-500',
-    error: 'text-red-500'
-  }
-  return colors[state]
 }
 </script>
 
@@ -38,10 +26,10 @@ const getStateColor = (state: TorrentState) => {
     <!-- 选择器 -->
     <td class="w-12 px-3 py-2">
       <div class="flex items-center justify-center">
-        <input 
-          type="checkbox" 
-          :checked="selected" 
-          class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/20 focus:ring-offset-0 focus:ring-2 cursor-pointer transition-all duration-150" 
+        <input
+          type="checkbox"
+          :checked="selected"
+          class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/20 focus:ring-offset-0 focus:ring-2 cursor-pointer transition-all duration-150"
         />
       </div>
     </td>
@@ -51,11 +39,9 @@ const getStateColor = (state: TorrentState) => {
       <div class="flex items-center gap-3">
         <!-- 状态图标 -->
         <div class="flex-shrink-0">
-          <svg class="w-4 h-4" :class="getStateColor(torrent.state)" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" :d="getStateIcon(torrent.state)" />
-          </svg>
+          <Icon :name="getStateIcon(torrent.state).name" :color="getStateIcon(torrent.state).color" :size="16" />
         </div>
-        
+
         <!-- 名称与基本信息 -->
         <div class="min-w-0 flex-1">
           <div class="font-medium text-gray-900 truncate text-sm leading-5">
@@ -84,7 +70,7 @@ const getStateColor = (state: TorrentState) => {
           </span>
         </div>
         <div class="progress-bar">
-          <div 
+          <div
             class="progress-fill"
             :class="{
               'bg-cyan-500': torrent.progress >= 1,
@@ -132,9 +118,7 @@ const getStateColor = (state: TorrentState) => {
     <td class="px-3 py-2 w-16">
       <div class="flex opacity-0 group-hover:opacity-100 transition-opacity duration-150">
         <button class="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700 transition-colors duration-150" title="更多操作">
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h.01M12 12h.01M19 12h.01M6 12a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0zm7 0a1 1 0 11-2 0 1 1 0 012 0z" />
-          </svg>
+          <Icon name="more-vertical" :size="16" />
         </button>
       </div>
     </td>

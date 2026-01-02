@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
 import type { AddTorrentParams } from '@/adapter/interface'
+import Icon from '@/components/Icon.vue'
 
 interface Props {
   open: boolean
@@ -115,9 +116,7 @@ async function handleSubmit() {
                 @click="$emit('close')"
                 class="p-1 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                </svg>
+                <Icon name="x" :size="20" class="text-gray-500" />
               </button>
             </div>
 
@@ -171,9 +170,7 @@ async function handleSubmit() {
                   @click="handleFileClick"
                   class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-gray-400 transition-colors"
                 >
-                  <svg class="w-10 h-10 text-gray-400 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-                  </svg>
+                  <Icon name="upload-cloud" :size="40" class="text-gray-400 mx-auto mb-3" />
                   <p class="text-sm text-gray-600">点击选择文件或拖拽到此处</p>
                   <p class="text-xs text-gray-500 mt-1">支持多个文件</p>
                 </div>
@@ -201,9 +198,7 @@ async function handleSubmit() {
                         @click="removeFile(index)"
                         class="p-1 hover:bg-gray-200 rounded transition-colors"
                       >
-                        <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                        </svg>
+                        <Icon name="x" :size="16" class="text-gray-500" />
                       </button>
                     </div>
                   </div>

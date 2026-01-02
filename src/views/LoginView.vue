@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
+import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
@@ -33,9 +34,7 @@ async function handleSubmit() {
       <!-- Logo 区域 -->
       <div class="text-center mb-8">
         <div class="inline-flex items-center justify-center w-12 h-12 bg-black rounded-xl mb-4">
-          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12" />
-          </svg>
+          <Icon name="download-cloud" :size="24" class="text-white" />
         </div>
         <h1 class="text-2xl font-semibold text-gray-900 mb-2">登录</h1>
         <p class="text-gray-500 text-sm">访问种子管理系统</p>
@@ -77,9 +76,7 @@ async function handleSubmit() {
           <!-- 错误提示 -->
           <div v-if="error" class="p-3 bg-red-50 border border-red-200 rounded-lg">
             <div class="flex items-center gap-2">
-              <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
-              </svg>
+              <Icon name="alert-triangle" color="red" :size="16" />
               <p class="text-sm text-red-500 font-medium">{{ error }}</p>
             </div>
           </div>
@@ -91,10 +88,7 @@ async function handleSubmit() {
             class="btn-primary w-full py-2.5 font-medium"
           >
             <div class="flex items-center justify-center gap-2">
-              <svg v-if="loading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-              </svg>
+              <Icon v-if="loading" name="loader-2" :size="16" class="animate-spin text-white" />
               {{ loading ? '登录中...' : '登录' }}
             </div>
           </button>
