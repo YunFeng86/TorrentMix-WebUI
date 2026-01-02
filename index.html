@@ -4,7 +4,17 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- CSP 仅在生产环境启用，开发环境注释掉以便调试 -->
+
+    <!-- Content Security Policy -->
+    <!-- 开发环境：允许 localhost 和内联样式 -->
+    <!-- 生产环境：应该替换为具体后端 Origin，移除 'unsafe-inline' -->
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self';
+               script-src 'self';
+               style-src 'self' 'unsafe-inline';
+               font-src 'self';
+               img-src 'self' data:;
+               connect-src 'self' http://localhost:* https:;">
     <title>qBittorrent WebUI</title>
   </head>
   <body>

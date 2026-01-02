@@ -11,7 +11,8 @@ export function formatSpeed(bytesPerSecond: number): string {
 }
 
 export function formatDuration(seconds: number): string {
-  if (seconds === -1) return '∞'
+  // qBittorrent 用 -1 或 >= 8640000 (100天) 表示无限
+  if (seconds === -1 || seconds >= 8640000) return '∞'
   if (seconds < 60) return `${seconds}s`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
   const hours = Math.floor(seconds / 3600)

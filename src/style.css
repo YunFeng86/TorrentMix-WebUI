@@ -1,8 +1,27 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* 本地字体定义 */
+@layer base {
+  /* Inter 可变字体 (开源: SIL Open Font License) */
+  @font-face {
+    font-family: 'Inter';
+    src: url('/fonts/inter.ttf') format('truetype');
+    font-weight: 100 900;
+    font-display: swap;
+    font-style: normal;
+  }
+
+  /* JetBrains Mono 可变字体 (开源: OFL) */
+  @font-face {
+    font-family: 'JetBrains Mono';
+    src: url('/fonts/jetbrains-mono.ttf') format('truetype');
+    font-weight: 100 800;
+    font-display: swap;
+    font-style: normal;
+  }
+}
 
 @layer base {
   * {
@@ -10,8 +29,13 @@
   }
   body {
     @apply font-sans text-gray-900 antialiased;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
     font-feature-settings: 'cv11', 'ss01';
     font-variation-settings: 'opsz' 32;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
   }
   
   /* 优化滚动条样式 */

@@ -2,7 +2,8 @@
 import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useTorrentStore } from '@/store/torrent'
 import { useAuthStore } from '@/store/auth'
-import { QbitAdapter } from '@/adapter/qbit'
+import { useBackendStore } from '@/store/backend'
+import { usePolling } from '@/composables/usePolling'
 import type { UnifiedTorrent } from '@/adapter/types'
 import TorrentRow from '@/components/torrent/TorrentRow.vue'
 import TorrentCard from '@/components/torrent/TorrentCard.vue'
@@ -10,13 +11,20 @@ import { formatSpeed } from '@/utils/format'
 
 const torrentStore = useTorrentStore()
 const authStore = useAuthStore()
-const adapter = new QbitAdapter()
+const backendStore = useBackendStore()
+
+// 从 Store 获取 adapter（解耦：View 层不再直接实例化 Adapter）
+const adapter = computed(() => backendStore.adapter!)
+
+// 确保在访问 adapter 之前已初始化
+if (!backendStore.isInitialized) {
+  throw new Error('[DashboardView] Backend not initialized. This should not happen after bootstrap.')
+}
 
 const selectedHashes = ref<Set<string>>(new Set())
 const searchQuery = ref('')
 const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
-let pollTimer: number | null = null
 
 // 监听屏幕尺寸变化
 const handleResize = () => {
@@ -85,14 +93,18 @@ const sortedTorrents = computed(() => {
   })
 })
 
-async function poll() {
-  try {
-    const data = await adapter.fetchList()
+// 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听）
+const { start: startPolling } = usePolling({
+  fn: async () => {
+    const data = await adapter.value.fetchList()
     torrentStore.updateTorrents(data)
-  } catch (error) {
-    console.error('轮询失败:', error)
-  }
-}
+  },
+  baseInterval: 2000,
+  maxInterval: 30000,
+  circuitBreakerThreshold: 5,
+  circuitBreakerDelay: 60000,
+  pauseWhenHidden: true
+})
 
 function toggleSelect(hash: string) {
   if (selectedHashes.value.has(hash)) {
@@ -113,35 +125,33 @@ function selectAll() {
 }
 
 async function handlePause() {
-  await adapter.pause(Array.from(selectedHashes.value))
+  await adapter.value.pause(Array.from(selectedHashes.value))
   selectedHashes.value.clear()
 }
 
 async function handleResume() {
-  await adapter.resume(Array.from(selectedHashes.value))
+  await adapter.value.resume(Array.from(selectedHashes.value))
   selectedHashes.value.clear()
 }
 
 async function handleDelete() {
   if (!confirm(`确定删除 ${selectedHashes.value.size} 个种子吗？`)) return
-  await adapter.delete(Array.from(selectedHashes.value), false)
+  await adapter.value.delete(Array.from(selectedHashes.value), false)
   selectedHashes.value.clear()
 }
 
-function logout() {
-  authStore.logout()
+async function logout() {
+  await authStore.logout()
   window.location.href = '/login'
 }
 
 onMounted(() => {
-  poll()
-  pollTimer = window.setInterval(poll, 2000)
+  startPolling()
   window.addEventListener('resize', handleResize)
   handleResize() // 初始化
 })
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('resize', handleResize)
 })
 </script>

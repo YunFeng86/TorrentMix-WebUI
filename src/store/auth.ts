@@ -21,7 +21,14 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated.value = true
   }
 
-  function logout() {
+  async function logout() {
+    // 调用后端 logout API
+    try {
+      await apiClient.post('/api/v2/auth/logout')
+    } catch {
+      // 失败也继续清理本地状态（静默失败）
+      console.warn('[AuthStore] Logout API call failed, proceeding with local cleanup')
+    }
     credentials.value = null
     isAuthenticated.value = false
   }

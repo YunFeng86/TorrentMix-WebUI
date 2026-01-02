@@ -1,5 +1,6 @@
 import { apiClient } from '@/api/client'
 import type { UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState } from './types'
+import type { BaseAdapter } from './interface'
 
 // 状态映射表 - 消除 if-else
 const STATE_MAP: Record<string, TorrentState> = {
@@ -17,7 +18,7 @@ const STATE_MAP: Record<string, TorrentState> = {
   metaDL: 'downloading'
 }
 
-export class QbitAdapter {
+export class QbitAdapter implements BaseAdapter {
   private rid = 0
   private currentMap = new Map<string, UnifiedTorrent>()
 

@@ -1,0 +1,204 @@
+import { ref, onMounted, onUnmounted, type Ref } from 'vue'
+
+/**
+ * 轮询状态
+ */
+export interface PollingOptions {
+  /** 基础轮询间隔（毫秒），默认 2000ms */
+  baseInterval?: number
+  /** 最大轮询间隔（毫秒），默认 30000ms */
+  maxInterval?: number
+  /** 熔断阈值：连续失败多少次后暂停，默认 5 次 */
+  circuitBreakerThreshold?: number
+  /** 熔断后暂停时间（毫秒），默认 60000ms */
+  circuitBreakerDelay?: number
+  /** 是否在页面隐藏时暂停轮询，默认 true */
+  pauseWhenHidden?: boolean
+  /** 轮询函数 */
+  fn: () => Promise<void>
+}
+
+/**
+ * 轮询控制器返回值
+ */
+export interface PollingController {
+  /** 开始轮询 */
+  start: () => void
+  /** 停止轮询 */
+  stop: () => void
+  /** 是否正在轮询 */
+  isPolling: Readonly<Ref<boolean>>
+  /** 当前轮询间隔（毫秒） */
+  currentInterval: Readonly<Ref<number>>
+  /** 连续失败次数 */
+  failureCount: Readonly<Ref<number>>
+  /** 是否已熔断 */
+  isCircuitBroken: Readonly<Ref<boolean>>
+}
+
+/**
+ * 智能轮询 Composable
+ *
+ * 特性：
+ * - 指数退避：失败时 interval *= 2，最大 maxInterval
+ * - 熔断器：连续失败 circuitBreakerThreshold 次后暂停 circuitBreakerDelay 毫秒
+ * - 页面可见性：页面隐藏时暂停轮询，显示时恢复
+ * - 自动恢复：成功时重置所有状态
+ *
+ * @example
+ * ```ts
+ * const { start, stop, isPolling } = usePolling({
+ *   fn: async () => {
+ *     await backendStore.adapter!.fetchList()
+ *   },
+ *   baseInterval: 2000,
+ *   maxInterval: 30000
+ * })
+ *
+ * onMounted(() => start())
+ * onUnmounted(() => stop())
+ * ```
+ */
+export function usePolling(options: PollingOptions): PollingController {
+  const {
+    baseInterval = 2000,
+    maxInterval = 30000,
+    circuitBreakerThreshold = 5,
+    circuitBreakerDelay = 60000,
+    pauseWhenHidden = true,
+    fn
+  } = options
+
+  const isPolling = ref(false)
+  const currentInterval = ref(baseInterval)
+  const failureCount = ref(0)
+  const isCircuitBroken = ref(false)
+
+  let timer: ReturnType<typeof setTimeout> | null = null
+  let circuitBreakerTimer: ReturnType<typeof setTimeout> | null = null
+  let isPaused = false
+
+  /**
+   * 失败时指数退避
+   */
+  function backoff() {
+    failureCount.value++
+
+    // 指数退避
+    const nextInterval = Math.min(baseInterval * 2 ** failureCount.value, maxInterval)
+    currentInterval.value = nextInterval
+
+    // 达到熔断阈值
+    if (failureCount.value >= circuitBreakerThreshold) {
+      isCircuitBroken.value = true
+      currentInterval.value = circuitBreakerDelay
+
+      // 熔断后延迟恢复
+      circuitBreakerTimer = setTimeout(() => {
+        failureCount.value = 0
+        isCircuitBroken.value = false
+        currentInterval.value = baseInterval
+      }, circuitBreakerDelay)
+    }
+  }
+
+  /**
+   * 成功时重置状态
+   */
+  function reset() {
+    failureCount.value = 0
+    currentInterval.value = baseInterval
+    isCircuitBroken.value = false
+
+    // 清除熔断定时器
+    if (circuitBreakerTimer) {
+      clearTimeout(circuitBreakerTimer)
+      circuitBreakerTimer = null
+    }
+  }
+
+  /**
+   * 执行单次轮询
+   */
+  async function tick() {
+    if (isPaused || !isPolling.value) return
+
+    try {
+      await fn()
+      reset()
+    } catch {
+      backoff()
+    }
+
+    // 调度下一次轮询
+    if (isPolling.value) {
+      timer = setTimeout(tick, currentInterval.value)
+    }
+  }
+
+  /**
+   * 开始轮询
+   */
+  function start() {
+    if (isPolling.value) return
+
+    isPolling.value = true
+    tick() // 立即执行一次
+  }
+
+  /**
+   * 停止轮询
+   */
+  function stop() {
+    isPolling.value = false
+
+    if (timer) {
+      clearTimeout(timer)
+      timer = null
+    }
+
+    if (circuitBreakerTimer) {
+      clearTimeout(circuitBreakerTimer)
+      circuitBreakerTimer = null
+    }
+  }
+
+  /**
+   * 页面可见性监听
+   */
+  if (pauseWhenHidden) {
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        isPaused = true
+      } else {
+        isPaused = false
+        // 页面恢复时立即执行一次
+        if (isPolling.value) {
+          tick()
+        }
+      }
+    }
+
+    onMounted(() => {
+      document.addEventListener('visibilitychange', handleVisibilityChange)
+    })
+
+    onUnmounted(() => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    })
+  }
+
+  // 组件卸载时清理
+  onUnmounted(() => {
+    stop()
+  })
+
+  return {
+    start,
+    stop,
+    isPolling,
+    currentInterval,
+    failureCount,
+    isCircuitBroken
+  }
+}
