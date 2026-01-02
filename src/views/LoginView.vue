@@ -16,9 +16,11 @@ async function handleSubmit() {
   error.value = ''
   try {
     await authStore.login(username.value, password.value)
+    password.value = ''
     router.push('/')
   } catch {
     error.value = '登录失败，请检查用户名和密码'
+    password.value = ''
   } finally {
     loading.value = false
   }

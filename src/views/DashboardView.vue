@@ -38,18 +38,34 @@ const handleResize = () => {
 // 过滤器
 const stateFilter = ref<'all' | 'downloading' | 'seeding' | 'paused' | 'checking'>('all')
 
-// 统计数据
+// 统计数据 - 一次遍历完成所有统计（Good Taste：消除不必要的多次遍历）
 const stats = computed(() => {
   const torrents = Array.from(torrentStore.torrents.values())
-  return {
+
+  // 单次遍历完成所有统计
+  const result = {
     total: torrents.length,
-    downloading: torrents.filter(t => t.state === 'downloading').length,
-    seeding: torrents.filter(t => t.state === 'seeding').length,
-    paused: torrents.filter(t => t.state === 'paused').length,
-    checking: torrents.filter(t => t.state === 'checking').length,
-    dlSpeed: torrents.reduce((sum, t) => sum + t.dlspeed, 0),
-    upSpeed: torrents.reduce((sum, t) => sum + t.upspeed, 0)
+    downloading: 0,
+    seeding: 0,
+    paused: 0,
+    checking: 0,
+    dlSpeed: 0,
+    upSpeed: 0
   }
+
+  for (const t of torrents) {
+    // 状态计数
+    if (t.state === 'downloading') result.downloading++
+    else if (t.state === 'seeding') result.seeding++
+    else if (t.state === 'paused') result.paused++
+    else if (t.state === 'checking') result.checking++
+
+    // 速度累加
+    result.dlSpeed += t.dlspeed
+    result.upSpeed += t.upspeed
+  }
+
+  return result
 })
 
 // 过滤后的种子
@@ -94,7 +110,7 @@ const sortedTorrents = computed(() => {
 })
 
 // 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听）
-const { start: startPolling } = usePolling({
+const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
   fn: async () => {
     const data = await adapter.value.fetchList()
     torrentStore.updateTorrents(data)
@@ -104,6 +120,17 @@ const { start: startPolling } = usePolling({
   circuitBreakerThreshold: 5,
   circuitBreakerDelay: 60000,
   pauseWhenHidden: true
+})
+
+// 连接状态计算
+const connectionStatus = computed(() => {
+  if (isCircuitBroken.value) {
+    return { text: '连接断开', type: 'error' as const, icon: 'disconnected' }
+  }
+  if (failureCount.value > 0) {
+    return { text: `重连中... (${failureCount.value})`, type: 'warning' as const, icon: 'reconnecting' }
+  }
+  return { text: '已连接', type: 'success' as const, icon: 'connected' }
 })
 
 function toggleSelect(hash: string) {
@@ -135,8 +162,35 @@ async function handleResume() {
 }
 
 async function handleDelete() {
-  if (!confirm(`确定删除 ${selectedHashes.value.size} 个种子吗？`)) return
-  await adapter.value.delete(Array.from(selectedHashes.value), false)
+  const count = selectedHashes.value.size
+  if (count === 0) return
+
+  // 获取种子名称（最多显示 3 个）
+  const names = Array.from(selectedHashes.value)
+    .map(h => torrentStore.torrents.get(h)?.name)
+    .filter(Boolean)
+    .slice(0, 3)
+
+  const nameList = names.join('、')
+  const moreText = count > 3 ? `等 ${count} 个种子` : `${count} 个种子`
+
+  // 询问是否删除文件
+  const deleteFiles = confirm(
+    `是否同时删除下载文件？\n\n种子：${nameList}${count > 3 ? '...' : ''}\n(${moreText})`
+  )
+
+  // 二次确认（如果删除文件）
+  if (deleteFiles) {
+    if (!confirm(`⚠️ 确定删除 ${moreText} 并同时删除下载文件吗？\n\n此操作不可恢复！`)) {
+      return
+    }
+  } else {
+    if (!confirm(`确定删除 ${moreText} 吗？\n（仅删除种子，保留文件）`)) {
+      return
+    }
+  }
+
+  await adapter.value.delete(Array.from(selectedHashes.value), deleteFiles)
   selectedHashes.value.clear()
 }
 
@@ -218,6 +272,17 @@ onUnmounted(() => {
         </div>
 
         <!-- 用户操作 -->
+        <!-- 连接状态指示器 -->
+        <div class="hidden sm:flex items-center gap-2" :title="connectionStatus.text">
+          <div
+            :class="`w-2 h-2 rounded-full ${
+              connectionStatus.type === 'success' ? 'bg-green-500' :
+              connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+            }`"
+          ></div>
+          <span class="text-xs text-gray-500">{{ connectionStatus.text }}</span>
+        </div>
+
         <button @click="logout" class="btn text-gray-600 hover:text-gray-900">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />

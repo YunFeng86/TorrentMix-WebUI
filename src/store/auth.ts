@@ -3,8 +3,7 @@ import { ref } from 'vue'
 import { apiClient, silentApiClient } from '@/api/client'
 
 export const useAuthStore = defineStore('auth', () => {
-  // 纯内存存储，不使用 localStorage
-  const credentials = ref<{ username: string; password: string } | null>(null)
+  // 只存认证状态，不在 Store 中驻留明文凭证
   const isAuthenticated = ref(false)
   const isChecking = ref(false)  // 验证中标志
 
@@ -17,7 +16,6 @@ export const useAuthStore = defineStore('auth', () => {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
 
-    credentials.value = { username, password }
     isAuthenticated.value = true
   }
 
@@ -29,7 +27,6 @@ export const useAuthStore = defineStore('auth', () => {
       // 失败也继续清理本地状态（静默失败）
       console.warn('[AuthStore] Logout API call failed, proceeding with local cleanup')
     }
-    credentials.value = null
     isAuthenticated.value = false
   }
 
@@ -48,5 +45,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { credentials, isAuthenticated, isChecking, login, logout, checkSession }
+  return { isAuthenticated, isChecking, login, logout, checkSession }
 })

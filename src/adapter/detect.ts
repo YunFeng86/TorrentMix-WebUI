@@ -1,6 +1,28 @@
 import axios from 'axios'
+import { getQbitBaseUrl } from '@/api/client'
 
 export type BackendType = 'qbit' | 'trans' | 'unknown'
+
+/**
+ * 判断是否应该使用代理（开发环境或同源）
+ *
+ * - 开发环境：走 Vite 代理（baseURL 为空字符串）
+ * - 生产环境同源：使用配置的 baseURL
+ * - 生产环境跨域且 VITE_ALLOW_CROSS_ORIGIN=true：使用配置的 baseURL
+ */
+function shouldUseProxy(): boolean {
+  const configuredUrl = getQbitBaseUrl()
+  if (!configuredUrl) return true  // 空 URL = 开发环境走代理
+
+  // 检查是否同源
+  if (typeof window === 'undefined') return true
+  try {
+    const resolved = new URL(configuredUrl, window.location.href)
+    return resolved.origin === window.location.origin
+  } catch {
+    return true
+  }
+}
 
 /**
  * 探测后端类型
@@ -12,19 +34,20 @@ export type BackendType = 'qbit' | 'trans' | 'unknown'
  * 并发探测两个端点，谁先有效响应就选谁。
  * 如果都失败，返回 'unknown'。
  *
- * @param baseUrl - 后端基础 URL，如 'http://localhost:8080'
  * @param timeout - 单个探测请求超时时间（毫秒）
  */
 export async function detectBackend(
-  baseUrl: string = '',
   timeout: number = 3000
 ): Promise<BackendType> {
+  // 与 api/client.ts 保持一致的 baseURL 逻辑
+  const useProxy = shouldUseProxy()
+  const baseURL = useProxy ? '' : getQbitBaseUrl()
+
   // 创建临时 axios 实例，不触发全局拦截器
   const detector = axios.create({
-    baseURL: baseUrl,
+    baseURL,
     timeout,
-    // 不携带凭证，避免 403 触发登录跳转
-    withCredentials: false
+    withCredentials: false  // 探测阶段不携带凭证
   })
 
   const qbitPromise = detector

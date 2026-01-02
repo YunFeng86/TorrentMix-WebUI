@@ -36,8 +36,16 @@ router.beforeEach(async (to) => {
   }
 
   // 已登录用户访问登录页，重定向到首页
-  if (to.path === '/login' && authStore.isAuthenticated) {
-    return '/'
+  // 先检查标志位（已登录则直接跳转，避免请求）
+  if (to.path === '/login') {
+    if (authStore.isAuthenticated) {
+      return '/'
+    }
+    // 标志位未设置，尝试静默验证（可能是页面刷新）
+    const isValid = await authStore.checkSession()
+    if (isValid) {
+      return '/'
+    }
   }
 
   return true

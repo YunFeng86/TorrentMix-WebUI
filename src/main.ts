@@ -14,7 +14,7 @@ import { useBackendStore } from './store/backend'
  *
  * 1. 创建 Vue 应用实例
  * 2. 安装 Pinia（需要先安装才能使用 Store）
- * 3. 探测后端类型
+ * 3. 探测后端类型（detectBackend 内部根据环境决定走代理还是直连）
  * 4. 注入对应的 Adapter 实例
  * 5. 安装路由并挂载应用
  */
@@ -24,9 +24,8 @@ async function bootstrap() {
 
   app.use(pinia)
 
-  // 探测后端类型并注入 Adapter
-  const baseUrl = import.meta.env.VITE_QB_URL || ''
-  const backendType = await detectBackend(baseUrl)
+  // 探测后端类型并注入 Adapter（detectBackend 自动处理代理逻辑）
+  const backendType = await detectBackend()
 
   const backendStore = useBackendStore()
 
