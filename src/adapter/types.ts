@@ -55,6 +55,10 @@ export interface ServerState {
   useAltSpeed: boolean;
   altDlLimit: number;
   altUpLimit: number;
+  // 后端版本信息
+  backendName?: string;   // 如 'qBittorrent', 'Transmission'
+  backendVersion?: string; // 如 'v5.0.4', '4.0.6'
+  apiVersion?: string;    // WebAPI 版本，如 '2.11.2'
 }
 
 // qBittorrent 原始响应类型

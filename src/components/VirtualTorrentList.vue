@@ -23,25 +23,27 @@ function handleRowClick(hash: string, event: Event) {
 }
 
 // 处理复选框点击：切换选择
-function handleToggleSelect(hash: string) {
-  emit('toggle-select', hash)
+function handleToggleSelect(event: Event) {
+  const customEvent = event as CustomEvent<string>
+  emit('toggle-select', customEvent.detail)
 }
 
 const parentRef = ref<HTMLElement | null>(null)
 
-// 虚拟滚动配置（使用 getter 函数使 count 响应式）
+// 虚拟滚动配置：使用自身作为滚动容器
 const virtualizer = useVirtualizer({
   get count() {
     return props.torrents.length
   },
   getScrollElement: () => parentRef.value,
-  estimateSize: () => 60,  // 每行高度
+  estimateSize: () => 60,
   overscan: 5
 })
 </script>
 
 <template>
-  <div ref="parentRef" class="h-full overflow-auto">
+  <!-- 虚拟滚动容器：flex-1 填充剩余空间并处理滚动 -->
+  <div ref="parentRef" class="flex-1 overflow-auto min-h-0">
     <div
       :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }"
     >
@@ -51,7 +53,7 @@ const virtualizer = useVirtualizer({
         :torrent="torrents[virtualRow.index]!"
         :selected="selectedHashes.has(torrents[virtualRow.index]!.id)"
         @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
-        @toggle-select="handleToggleSelect($event.detail)"
+        @toggle-select="handleToggleSelect"
         :style="{
           position: 'absolute',
           top: 0,

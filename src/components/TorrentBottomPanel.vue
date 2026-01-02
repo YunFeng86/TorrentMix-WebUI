@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted } from 'vue'
+import { ref, watch } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { UnifiedTorrentDetail, UnifiedTorrent } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
 import { formatBytes, formatSpeed } from '@/utils/format'
+import { useDragResize } from '@/composables/useDragResize'
 
 interface Props {
   torrent: UnifiedTorrent | null
@@ -30,15 +31,31 @@ const error = ref('')
 // 当前 Tab
 const activeTab = ref<'overview' | 'files' | 'trackers' | 'peers'>('overview')
 
-// 拖拽调整高度相关
-const isResizing = ref(false)
-const resizeStartY = ref(0)
-const resizeStartHeight = ref(0)
+// 使用拖拽 composable（核心性能优化）
+const {
+  isResizing,
+  panelStyle,
+  startResize,
+  commitHeight,
+  setHeight
+} = useDragResize({
+  initialHeight: props.height,
+  minHeight: 200,
+  maxHeight: 800
+})
 
-// 计算显示的高度
-const displayHeight = computed(() => {
-  if (!props.visible) return 0
-  return Math.max(200, Math.min(800, props.height))
+// 监听外部高度变化（非拖拽时）
+watch(() => props.height, (newHeight) => {
+  if (!isResizing.value) {
+    setHeight(newHeight)
+  }
+})
+
+// 监听拖拽状态变化，拖拽结束时提交高度
+watch(isResizing, (resizing, wasResizing) => {
+  if (wasResizing && !resizing) {
+    emit('resize', commitHeight())
+  }
 })
 
 // 获取详情
@@ -76,39 +93,6 @@ watch(() => props.visible, (visible) => {
   }
 })
 
-// 处理拖拽调整大小
-function startResize(e: MouseEvent) {
-  isResizing.value = true
-  resizeStartY.value = e.clientY
-  resizeStartHeight.value = props.height
-  document.addEventListener('mousemove', handleResize)
-  document.addEventListener('mouseup', stopResize)
-  document.body.style.cursor = 'ns-resize'
-  e.preventDefault()
-}
-
-function handleResize(e: MouseEvent) {
-  if (!isResizing.value) return
-  
-  const deltaY = resizeStartY.value - e.clientY  // 向上拖拽为正
-  const newHeight = Math.max(200, Math.min(800, resizeStartHeight.value + deltaY))
-  emit('resize', newHeight)
-}
-
-function stopResize() {
-  isResizing.value = false
-  document.removeEventListener('mousemove', handleResize)
-  document.removeEventListener('mouseup', stopResize)
-  document.body.style.cursor = ''
-}
-
-// 组件卸载时清理事件监听
-onUnmounted(() => {
-  if (isResizing.value) {
-    stopResize()
-  }
-})
-
 // 处理操作
 function handleAction(action: string) {
   if (props.torrent) {
@@ -130,20 +114,24 @@ function getHealthStatus(torrent: UnifiedTorrent) {
 
 // ETA格式化
 function formatETA(eta: number): string {
-  if (eta <= 0 || !isFinite(eta)) return '∞'
-  
-  const hours = Math.floor(eta / 3600)
-  const minutes = Math.floor((eta % 3600) / 60)
-  
-  if (hours === 0) {
-    return `${minutes}分钟`
-  } else if (hours < 24) {
-    return `${hours}小时${minutes}分钟`
-  } else {
-    const days = Math.floor(hours / 24)
-    const remainingHours = hours % 24
+  // 无限时间判断：-1、负数、非数值、或超过1年
+  if (eta === -1 || eta <= 0 || !isFinite(eta) || eta >= 86400 * 365) return '∞'
+
+  const seconds = Math.floor(eta)
+  if (seconds < 60) return `${seconds}秒`
+
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}分钟`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}小时`
+
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  if (remainingHours > 0) {
     return `${days}天${remainingHours}小时`
   }
+  return `${days}天`
 }
 </script>
 
@@ -151,13 +139,14 @@ function formatETA(eta: number): string {
   <!-- 底部详情面板 -->
   <div
     v-show="visible"
-    class="border-t border-gray-200 bg-white flex flex-col transition-all duration-200 ease-out"
-    :style="{ height: `${displayHeight}px` }"
+    class="border-t border-gray-200 bg-white flex flex-col"
+    :style="panelStyle"
   >
     <!-- 顶部拖拽调整条 -->
     <div
       @mousedown="startResize"
       class="h-1 bg-gray-200 hover:bg-gray-300 cursor-ns-resize flex-shrink-0 relative group"
+      :class="{ 'bg-blue-400': isResizing }"
     >
       <div class="absolute inset-x-0 top-0 h-2 -translate-y-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
         <div class="h-0.5 w-12 bg-gray-400 rounded"></div>

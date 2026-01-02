@@ -17,8 +17,8 @@ import TorrentBottomPanel from '@/components/TorrentBottomPanel.vue'
 import Icon from '@/components/Icon.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
 
-// 虚拟滚动阈值：超过 500 个种子时启用虚拟滚动
-const VIRTUAL_SCROLL_THRESHOLD = 500
+// 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
+const VIRTUAL_SCROLL_THRESHOLD = 200
 
 const router = useRouter()
 const torrentStore = useTorrentStore()
@@ -350,6 +350,11 @@ async function immediateRefresh() {
       tags: result.tags,
       serverState: result.serverState
     })
+    // 同步更新详情面板的种子引用（否则面板显示的是快照数据）
+    if (selectedTorrent.value) {
+      const updated = result.torrents.get(selectedTorrent.value.id)
+      if (updated) selectedTorrent.value = updated
+    }
   } catch (error) {
     console.error('[Dashboard] Refresh failed:', error)
   }
@@ -366,6 +371,11 @@ const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
       tags: result.tags,
       serverState: result.serverState
     })
+    // 同步更新详情面板的种子引用（保持面板数据与 Store 同步）
+    if (selectedTorrent.value) {
+      const updated = result.torrents.get(selectedTorrent.value.id)
+      if (updated) selectedTorrent.value = updated
+    }
   },
   // 遇到 403 立即跳转登录
   onFatalError: (error) => {
@@ -665,11 +675,12 @@ onUnmounted(() => {
 
       <!-- 左侧边栏 -->
       <aside
-        :class="`bg-white border-r border-gray-200 flex flex-col shrink-0 transition-all duration-300 z-50
+        :class="`bg-white border-r border-gray-200 flex flex-col shrink-0 z-50
         ${isMobile
-          ? (sidebarCollapsed ? '-translate-x-full w-64 fixed left-0 top-0 h-full' : 'translate-x-0 w-64 fixed left-0 top-0 h-full')
+          ? (sidebarCollapsed ? '-translate-x-full w-64 fixed left-0 top-0 h-full transition-transform duration-300' : 'translate-x-0 w-64 fixed left-0 top-0 h-full transition-transform duration-300')
           : (sidebarCollapsed ? 'w-16' : 'w-64')
         }`"
+        :style="!isMobile ? 'transition: width 300ms ease;' : ''"
       >
         <!-- 移动端顶部栏 -->
         <div v-if="isMobile" class="p-4 border-b border-gray-200 flex items-center justify-between">
@@ -783,6 +794,13 @@ onUnmounted(() => {
             <div class="flex justify-between">
               <span>总共</span>
               <span class="font-mono">{{ stats.total }}</span>
+            </div>
+            <div v-if="backendStore.versionDisplay" class="flex justify-between pt-2 mt-2 border-t border-gray-200">
+              <span class="text-gray-400">{{ backendStore.versionDisplay }}</span>
+            </div>
+            <div v-else class="flex items-center gap-1 pt-2 mt-2 border-t border-gray-200 text-amber-600">
+              <Icon name="alert-triangle" :size="12" />
+              <span>版本检测失败</span>
             </div>
           </div>
         </div>
@@ -901,17 +919,14 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 种子列表容器 -->
-        <div 
-          class="flex-1 overflow-auto"
-          :style="{ height: showDetailPanel ? `calc(100% - ${detailPanelHeight + 1}px)` : '100%' }"
-        >
+        <!-- 种子列表容器：flex-1 自动填充剩余空间 -->
+        <div class="flex-1 overflow-auto min-h-0">
           <!-- 桌面端列表视图 -->
           <div class="hidden md:block h-full">
             <!-- 虚拟滚动（大量种子时） -->
             <div v-if="useVirtualScroll" class="h-full flex flex-col">
               <!-- 表头 -->
-              <div class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0 flex items-center text-xs text-gray-600 uppercase tracking-wide">
+              <div class="shrink-0 bg-gray-100 border-b border-gray-200 flex items-center text-xs text-gray-600 uppercase tracking-wide">
                 <div class="w-12 px-3 py-3"></div>
                 <div class="flex-1 px-3 py-3">种子</div>
                 <div class="w-32 px-3 py-3">进度</div>
@@ -920,6 +935,7 @@ onUnmounted(() => {
                 <div class="w-20 px-3 py-3 text-right hidden lg:flex">剩余</div>
                 <div class="w-16 px-3 py-3"></div>
               </div>
+              <!-- 虚拟列表：直接成为滚动容器 -->
               <VirtualTorrentList
                 v-if="sortedTorrents.length > 0"
                 :torrents="sortedTorrents"
@@ -928,7 +944,7 @@ onUnmounted(() => {
                 @toggle-select="toggleSelect"
                 @action="handleTorrentAction"
               />
-              <div v-else class="px-4 py-16 text-center">
+              <div v-else class="px-4 py-16 text-center flex-1 flex items-center justify-center">
                 <div class="flex flex-col items-center gap-4">
                   <Icon name="inbox" :size="48" class="text-gray-300" />
                   <div class="text-gray-500">
@@ -999,6 +1015,16 @@ onUnmounted(() => {
           </div>
         </div>
 
+        <!-- 底部详情面板（在状态栏上面） -->
+        <TorrentBottomPanel
+          :torrent="selectedTorrent"
+          :visible="showDetailPanel"
+          :height="detailPanelHeight"
+          @close="closeDetailPanel"
+          @resize="resizeDetailPanel"
+          @action="handleTorrentAction"
+        />
+
         <!-- 底部状态栏 -->
         <div class="border-t border-gray-200 px-4 py-2 text-xs text-gray-500 flex items-center justify-between shrink-0 bg-gray-50">
           <div class="flex items-center gap-4">
@@ -1018,16 +1044,6 @@ onUnmounted(() => {
       :open="showAddDialog"
       @close="showAddDialog = false"
       @add="handleAddTorrent"
-    />
-
-    <!-- 底部详情面板 -->
-    <TorrentBottomPanel
-      :torrent="selectedTorrent"
-      :visible="showDetailPanel"
-      :height="detailPanelHeight"
-      @close="closeDetailPanel"
-      @resize="resizeDetailPanel"
-      @action="handleTorrentAction"
     />
   </div>
 </template>

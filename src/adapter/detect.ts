@@ -3,6 +3,16 @@ import { getQbitBaseUrl } from '@/api/client'
 
 export type BackendType = 'qbit' | 'trans' | 'unknown'
 
+export interface BackendVersion {
+  type: BackendType
+  version: string
+  major: number
+  minor: number
+  patch: number
+  apiVersion?: string
+  rpcSemver?: string
+}
+
 // 从环境变量读取强制指定的后端类型
 function getForcedBackend(): BackendType | null {
   const forced = import.meta.env.VITE_BACKEND_TYPE?.toLowerCase()
@@ -34,77 +44,95 @@ function shouldUseProxy(): boolean {
 }
 
 /**
- * 探测后端类型
- *
- * 探测策略：
- * - qBittorrent: GET /api/v2/app/version -> 200 (已登录) 或 403 (未登录但端点存在)
- * - Transmission: POST /transmission/rpc -> 409 (需要 Session ID)
- *
- * 并发探测两个端点，谁先有效响应就选谁。
- * 如果都失败，返回 'unknown'。
- *
- * @param timeout - 单个探测请求超时时间（毫秒）
+ * 探测后端类型并获取版本信息
  */
-export async function detectBackend(
-  timeout: number = 3000
-): Promise<BackendType> {
-  // 环境变量强制指定，跳过检测
+export async function detectBackendWithVersion(timeout = 3000): Promise<BackendVersion> {
   const forced = getForcedBackend()
-  if (forced) return forced
-  // 与 api/client.ts 保持一致的 baseURL 逻辑
   const useProxy = shouldUseProxy()
   const baseURL = useProxy ? '' : getQbitBaseUrl()
 
-  // 创建临时 axios 实例，不触发全局拦截器
-  const detector = axios.create({
-    baseURL,
-    timeout,
-    withCredentials: false  // 探测阶段不携带凭证
-  })
+  const detector = axios.create({ baseURL, timeout, withCredentials: false })
 
-  const qbitPromise = detector
-    .get('/api/v2/app/version', { validateStatus: () => true })
-    .then(res => {
-      // 200 或 403 都表示 qBittorrent 端点存在
-      if (res.status === 200 || res.status === 403) {
-        return 'qbit' as const
+  // 尝试 qBittorrent
+  try {
+    const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
+    if (res.status === 200 || res.status === 403) {
+      const version = res.status === 200 ? String(res.data).trim() : 'unknown'
+      const parsed = parseVersion(version)
+
+      // 获取 API 版本
+      let apiVersion: string | undefined
+      if (res.status === 200) {
+        try {
+          const apiRes = await detector.get('/api/v2/app/webapiVersion')
+          apiVersion = String(apiRes.data).trim()
+        } catch {}
       }
-      throw new Error('qBittorrent not found')
-    })
-    .catch(() => {
-      throw new Error('qBittorrent not found')
-    })
 
-  const transPromise = detector
-    .post(
-      '/transmission/rpc',
-      { method: 'session-get' },
-      {
-        validateStatus: () => true,
-        headers: { 'Content-Type': 'application/json' }
+      return {
+        type: 'qbit',
+        version,
+        ...parsed,
+        apiVersion
       }
-    )
-    .then(res => {
-      // 409 表示需要 Session ID，说明是 Transmission
-      // 200 表示已认证成功
-      if (res.status === 409 || res.status === 200) {
-        return 'trans' as const
+    }
+  } catch {}
+
+  // 尝试 Transmission
+  try {
+    const res = await detector.post('/transmission/rpc', { method: 'session-get' }, {
+      validateStatus: () => true,
+      headers: { 'Content-Type': 'application/json' }
+    })
+
+    if (res.status === 409 || res.status === 200) {
+      let version = 'unknown'
+      let rpcSemver: string | undefined
+
+      if (res.status === 200 && res.data?.arguments) {
+        version = res.data.arguments.version || 'unknown'
+        rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
       }
-      throw new Error('Transmission not found')
-    })
-    .catch(() => {
-      throw new Error('Transmission not found')
-    })
 
-  // 并发探测，qBittorrent 优先
-  // 理由：快速检测，同时避免之前 race 的误判问题
-  const results = await Promise.allSettled([qbitPromise, transPromise])
+      const parsed = parseVersion(version)
+      return {
+        type: 'trans',
+        version,
+        ...parsed,
+        rpcSemver
+      }
+    }
+  } catch {}
 
-  const qbitSuccess = results[0].status === 'fulfilled' && results[0].value === 'qbit'
-  const transSuccess = results[1].status === 'fulfilled' && results[1].value === 'trans'
+  // 保守策略：检测失败返回 qBittorrent v4
+  return {
+    type: forced || 'qbit',
+    version: 'unknown',
+    major: 4,
+    minor: 0,
+    patch: 0
+  }
+}
 
-  // qBittorrent 优先（如果同时存在）
-  if (qbitSuccess) return 'qbit'
-  if (transSuccess) return 'trans'
-  return 'unknown'
+/**
+ * 解析版本字符串
+ */
+function parseVersion(version: string): { major: number; minor: number; patch: number } {
+  const match = version.match(/(\d+)\.(\d+)\.(\d+)/)
+  if (match && match[1] && match[2] && match[3]) {
+    return {
+      major: parseInt(match[1], 10),
+      minor: parseInt(match[2], 10),
+      patch: parseInt(match[3], 10)
+    }
+  }
+  return { major: 4, minor: 0, patch: 0 }
+}
+
+/**
+ * 探测后端类型（保留向后兼容）
+ */
+export async function detectBackend(timeout = 3000): Promise<BackendType> {
+  const result = await detectBackendWithVersion(timeout)
+  return result.type
 }

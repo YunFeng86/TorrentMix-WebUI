@@ -1,6 +1,6 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter, AddTorrentParams, FetchListResult } from './interface'
-import type { UnifiedTorrent, TorrentState, UnifiedTorrentDetail, TorrentFile, Tracker, Peer } from './types'
+import type { BaseAdapter, AddTorrentParams, FetchListResult } from '../interface'
+import type { UnifiedTorrent, TorrentState, UnifiedTorrentDetail, TorrentFile, Tracker, Peer } from '../types'
 
 /**
  * Transmission RPC 请求体
@@ -148,7 +148,7 @@ export class TransAdapter implements BaseAdapter {
 
     // 处理 magnet 链接
     if (params.urls?.trim()) {
-      const urls = params.urls.trim().split('\n').filter(u => u)
+      const urls = params.urls.trim().split('\n').filter((u: string) => u)
       for (const url of urls) {
         if (url.startsWith('magnet:')) {
           args['filename'] = url

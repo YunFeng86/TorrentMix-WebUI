@@ -10,13 +10,10 @@ const emit = defineEmits<{
 }>()
 
 // 处理复选框点击，切换选择状态
-function handleCheckboxClick(e: Event) {
+function handleCheckboxClick(e: MouseEvent) {
+  // 阻止触发整行点击（否则会先选中行再 toggle，导致无法选中只能取消）
   e.stopPropagation()
-  // 向上传递自定义事件，让父组件处理选择
-  const target = e.target as HTMLInputElement
-  target.checked = !props.selected  // 切换选中状态
-  // 触发父组件的 toggleSelect 逻辑 - 通过 click 事件传递
-  // 父组件需要区分是复选框点击还是行点击
+  // 触发父组件的 toggleSelect 逻辑
   ;(e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('toggle-select', {
     bubbles: true,
     detail: props.torrent.id
@@ -58,20 +55,24 @@ const getHealthPercentage = (torrent: UnifiedTorrent): number => {
 
 // 格式化ETA
 const formatETA = (eta: number): string => {
-  if (eta <= 0 || !isFinite(eta)) return '∞'
+  // 无限时间判断：-1、负数、非数值、或超过1年
+  if (eta === -1 || eta <= 0 || !isFinite(eta) || eta >= 86400 * 365) return '∞'
 
-  const hours = Math.floor(eta / 3600)
-  const minutes = Math.floor((eta % 3600) / 60)
+  const seconds = Math.floor(eta)
+  if (seconds < 60) return `${seconds}秒`
 
-  if (hours === 0) {
-    return `${minutes}分`
-  } else if (hours < 24) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}`
-  } else {
-    const days = Math.floor(hours / 24)
-    const remainingHours = hours % 24
-    return `${days}天${remainingHours}时`
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}分`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}小时`
+
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  if (remainingHours > 0) {
+    return `${days}天${remainingHours}小时`
   }
+  return `${days}天`
 }
 </script>
 
@@ -87,7 +88,7 @@ const formatETA = (eta: number): string => {
       <input
         type="checkbox"
         :checked="selected"
-        @change="handleCheckboxClick"
+        @click="handleCheckboxClick"
         class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/20 focus:ring-offset-0 focus:ring-2 cursor-pointer transition-all duration-150"
       />
     </div>
