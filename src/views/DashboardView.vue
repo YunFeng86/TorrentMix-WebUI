@@ -191,6 +191,8 @@ const stats = computed(() => {
     seeding: 0,
     paused: 0,
     checking: 0,
+    queued: 0,
+    error: 0,
     dlSpeed: 0,
     upSpeed: 0
   }
@@ -201,6 +203,8 @@ const stats = computed(() => {
     else if (t.state === 'seeding') result.seeding++
     else if (t.state === 'paused') result.paused++
     else if (t.state === 'checking') result.checking++
+    else if (t.state === 'queued') result.queued++
+    else if (t.state === 'error') result.error++
 
     // 速度累加
     result.dlSpeed += t.dlspeed
@@ -265,35 +269,26 @@ const filteredTorrents = computed(() => {
 // ========== 阶段 4: 排序功能 ==========
 
 // 排序字段和方向
-type SortField = 'name' | 'size' | 'progress' | 'dlSpeed' | 'upSpeed' | 'addedTime' | 'ratio'
+type SortField = 'name' | 'size' | 'progress' | 'dlSpeed' | 'upSpeed' | 'addedTime' | 'ratio' | 'eta'
 type SortDirection = 'asc' | 'desc'
 
 const sortField = ref<SortField>('name')
 const sortDirection = ref<SortDirection>('asc')
-const showSortMenu = ref(false)
 
-// 排序字段标签映射
-const sortFieldLabels: Record<SortField, string> = {
-  name: '名称',
-  size: '大小',
-  progress: '进度',
-  dlSpeed: '下载速度',
-  upSpeed: '上传速度',
-  addedTime: '添加时间',
-  ratio: '分享率'
-}
-
-// 切换排序字段
-function setSortField(field: SortField) {
+// 切换排序字段（表头点击）
+function toggleSort(field: SortField) {
   if (sortField.value === field) {
-    // 同一字段切换方向
     sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
   } else {
     sortField.value = field
-    sortDirection.value = 'desc'  // 新字段默认降序（数值类）
-    if (field === 'name') sortDirection.value = 'asc'  // 名称默认升序
+    sortDirection.value = field === 'name' ? 'asc' : 'desc'
   }
-  showSortMenu.value = false
+}
+
+// 获取排序图标
+function getSortIcon(field: SortField): string {
+  if (sortField.value !== field) return ''
+  return sortDirection.value === 'asc' ? '↑' : '↓'
 }
 
 // 排序函数
@@ -325,6 +320,13 @@ function compareTorrents(a: UnifiedTorrent, b: UnifiedTorrent): number {
       break
     case 'ratio':
       compare = a.ratio - b.ratio
+      break
+    case 'eta':
+      // eta = -1 表示无限大，应该排在最后
+      if (a.eta === -1 && b.eta === -1) compare = 0
+      else if (a.eta === -1) compare = 1
+      else if (b.eta === -1) compare = -1
+      else compare = a.eta - b.eta
       break
   }
 
@@ -567,103 +569,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="h-screen flex flex-col bg-gray-50">
-    <!-- 顶部栏 -->
-    <header class="bg-white border-b border-gray-200 px-4 py-3 flex items-center justify-between shrink-0">
-      <div class="flex items-center gap-4">
-        <!-- 移动端菜单按钮 -->
-        <button
-          v-if="isMobile"
-          @click="sidebarCollapsed = false"
-          class="btn p-2 hover:bg-gray-100 md:hidden"
-        >
-          <Icon name="menu" :size="20" />
-        </button>
-
-        <!-- Logo -->
-        <div class="flex items-center gap-3">
-          <div class="w-8 h-8 bg-black rounded-lg flex items-center justify-center">
-            <Icon name="download-cloud" color="white" :size="20" class="text-white" />
-          </div>
-          <div class="hidden sm:block">
-            <h1 class="text-base font-semibold text-gray-900">种子管理</h1>
-            <p class="text-xs text-gray-500">{{ backendStore.backendName }} WebUI</p>
-          </div>
-        </div>
-
-        <!-- 状态统计卡片 -->
-        <div class="hidden lg:flex items-center gap-4 ml-8">
-          <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
-            <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
-            <span class="text-sm text-gray-700 font-medium">{{ stats.downloading }}</span>
-            <span class="text-xs text-gray-500">下载中</span>
-          </div>
-          <div class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 rounded-lg">
-            <div class="w-2 h-2 bg-cyan-500 rounded-full"></div>
-            <span class="text-sm text-gray-700 font-medium">{{ stats.seeding }}</span>
-            <span class="text-xs text-gray-500">做种中</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 速度显示 -->
-      <div class="flex items-center gap-6">
-        <!-- 全局服务器状态 (大屏幕显示) -->
-        <div v-if="backendStore.serverState" class="hidden xl:flex items-center gap-4 text-xs text-gray-500">
-          <!-- 磁盘剩余空间 -->
-          <div class="flex items-center gap-1" :title="`磁盘剩余: ${formatBytes(backendStore.serverState.freeSpaceOnDisk)}`">
-            <Icon name="hard-drive" :size="14" />
-            <span class="font-mono">{{ formatBytes(backendStore.serverState.freeSpaceOnDisk) }}</span>
-          </div>
-          <!-- 全局 Peer 连接数 -->
-          <div class="flex items-center gap-1" :title="`全局 Peer 连接: ${backendStore.serverState.peers}`">
-            <Icon name="users" :size="14" />
-            <span class="font-mono">{{ backendStore.serverState.peers }}</span>
-          </div>
-          <!-- 全局限速 (如果设置了) -->
-          <div v-if="backendStore.serverState.dlRateLimit > 0 || backendStore.serverState.upRateLimit > 0" class="flex items-center gap-1">
-            <Icon name="gauge" :size="14" />
-            <span class="font-mono">
-              {{ backendStore.serverState.dlRateLimit > 0 ? formatSpeed(backendStore.serverState.dlRateLimit) : '∞' }}/
-              {{ backendStore.serverState.upRateLimit > 0 ? formatSpeed(backendStore.serverState.upRateLimit) : '∞' }}
-            </span>
-          </div>
-          <!-- Alt 速率状态 -->
-          <div v-if="backendStore.serverState.useAltSpeed" class="flex items-center gap-1 text-orange-500" title="临时限速已启用">
-            <Icon name="timer" :size="14" />
-            <span>限速中</span>
-          </div>
-        </div>
-
-        <div class="hidden md:flex items-center gap-4">
-          <div class="flex items-center gap-2">
-            <Icon name="download" color="blue" :size="16" />
-            <span class="text-sm font-mono text-gray-900">{{ formatSpeed(stats.dlSpeed) }}</span>
-          </div>
-          <div class="flex items-center gap-2">
-            <Icon name="upload-cloud" color="cyan" :size="16" />
-            <span class="text-sm font-mono text-gray-900">{{ formatSpeed(stats.upSpeed) }}</span>
-          </div>
-        </div>
-
-        <!-- 用户操作 -->
-        <!-- 连接状态指示器 -->
-        <div class="hidden sm:flex items-center gap-2" :title="connectionStatus.text">
-          <div
-            :class="`w-2 h-2 rounded-full ${
-              connectionStatus.type === 'success' ? 'bg-green-500' :
-              connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-            }`"
-          ></div>
-          <span class="text-xs text-gray-500">{{ connectionStatus.text }}</span>
-        </div>
-
-        <button @click="logout" class="btn text-gray-600 hover:text-gray-900">
-          <Icon name="log-out" :size="16" />
-        </button>
-      </div>
-    </header>
-
+  <div class="h-screen flex bg-gray-50">
     <!-- 主内容区 -->
     <div class="flex-1 flex overflow-hidden relative">
       <!-- 移动端遮罩层 -->
@@ -705,47 +611,49 @@ onUnmounted(() => {
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'all' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="list" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">全部</span>
-              <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.total }}</span>
+              <span v-if="stats.total > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'all' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.total }}</span>
             </button>
 
             <button @click="stateFilter = 'downloading'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'downloading' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="download" color="blue" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">下载中</span>
-              <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'downloading' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.downloading }}</span>
+              <span v-if="stats.downloading > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'downloading' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.downloading }}</span>
             </button>
 
             <button @click="stateFilter = 'seeding'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'seeding' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="upload-cloud" color="cyan" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">做种中</span>
-              <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'seeding' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.seeding }}</span>
+              <span v-if="stats.seeding > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'seeding' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.seeding }}</span>
             </button>
 
             <button @click="stateFilter = 'paused'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'paused' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="pause-circle" color="gray" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">已暂停</span>
-              <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'paused' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.paused }}</span>
+              <span v-if="stats.paused > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'paused' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.paused }}</span>
             </button>
 
             <button @click="stateFilter = 'checking'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'checking' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="refresh-cw" color="purple" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">检查中</span>
-              <span :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'checking' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.checking }}</span>
+              <span v-if="stats.checking > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'checking' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.checking }}</span>
             </button>
 
             <button @click="stateFilter = 'queued'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'queued' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="clock" color="orange" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">队列中</span>
+              <span v-if="stats.queued > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'queued' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.queued }}</span>
             </button>
 
             <button @click="stateFilter = 'error'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'error' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
               <Icon name="alert-circle" color="red" :size="16" />
               <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">错误</span>
+              <span v-if="stats.error > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'error' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.error }}</span>
             </button>
           </div>
 
@@ -853,69 +761,44 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <!-- 选择器 & 排序 -->
-          <div class="flex items-center gap-4">
-            <div class="flex items-center gap-3">
-              <button @click="selectAll" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150">
-                {{ selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选' }}
-              </button>
-              <span v-if="selectedHashes.size > 0" class="text-sm text-blue-500 font-medium">
-                已选 {{ selectedHashes.size }} 项
-              </span>
+          <!-- 全选 -->
+          <button @click="selectAll" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150">
+            {{ selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选' }}
+          </button>
+          <span v-if="selectedHashes.size > 0" class="text-sm text-blue-500 font-medium">
+            已选 {{ selectedHashes.size }} 项
+          </span>
+
+          <!-- 右侧：搜索 + 连接状态 + 退出 -->
+          <div class="flex-1 flex items-center justify-end gap-3">
+            <!-- 搜索框 -->
+            <div class="max-w-md w-64">
+              <div class="relative">
+                <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  v-model="searchQuery"
+                  type="text"
+                  placeholder="搜索种子名称..."
+                  class="input pl-10 py-2"
+                />
+              </div>
             </div>
 
-            <!-- 排序下拉选择器 -->
-            <div class="relative">
-              <button
-                @click="setSortField('name')"
-                class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 transition-colors"
-              >
-                <Icon name="arrow-up-down" :size="14" />
-                <span>{{ sortFieldLabels[sortField] }}</span>
-                <Icon name="chevron-up" :size="12" :class="{ 'rotate-180': sortDirection === 'desc' }" />
-              </button>
-
-              <!-- 排序下拉菜单 -->
-              <Transition
-                enter-active-class="transition-opacity duration-150"
-                enter-from-class="opacity-0"
-                enter-to-class="opacity-100"
-                leave-active-class="transition-opacity duration-150"
-                leave-from-class="opacity-100"
-                leave-to-class="opacity-0"
-              >
-                <div
-                  v-if="showSortMenu"
-                  v-click-outside="() => showSortMenu = false"
-                  class="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden z-20 min-w-[160px]"
-                >
-                  <button
-                    v-for="(label, field) in sortFieldLabels"
-                    :key="field"
-                    @click="setSortField(field as SortField)"
-                    :class="`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center justify-between ${
-                      sortField === field ? 'bg-gray-100 font-medium' : ''
-                    }`"
-                  >
-                    <span>{{ label }}</span>
-                    <Icon v-if="sortField === field" name="check" :size="14" class="text-blue-500" />
-                  </button>
-                </div>
-              </Transition>
+            <!-- 连接状态 -->
+            <div class="flex items-center gap-2" :title="connectionStatus.text">
+              <div
+                :class="`w-2 h-2 rounded-full ${
+                  connectionStatus.type === 'success' ? 'bg-green-500' :
+                  connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                }`"
+              ></div>
+              <span class="text-xs text-gray-500">{{ connectionStatus.text }}</span>
             </div>
-          </div>
 
-          <!-- 搜索框 -->
-          <div class="flex-1 max-w-md ml-auto">
-            <div class="relative">
-              <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input
-                v-model="searchQuery"
-                type="text"
-                placeholder="搜索种子名称..."
-                class="input pl-10 py-2"
-              />
-            </div>
+            <!-- 退出 -->
+            <button @click="logout" class="btn p-2 text-gray-600 hover:text-gray-900" title="退出">
+              <Icon name="log-out" :size="16" />
+            </button>
           </div>
         </div>
 
@@ -928,11 +811,21 @@ onUnmounted(() => {
               <!-- 表头 -->
               <div class="shrink-0 bg-gray-100 border-b border-gray-200 flex items-center text-xs text-gray-600 uppercase tracking-wide">
                 <div class="w-12 px-3 py-3"></div>
-                <div class="flex-1 px-3 py-3">种子</div>
-                <div class="w-32 px-3 py-3">进度</div>
-                <div class="w-20 px-3 py-3 text-right">下载</div>
-                <div class="w-20 px-3 py-3 text-right hidden md:flex">上传</div>
-                <div class="w-20 px-3 py-3 text-right hidden lg:flex">剩余</div>
+                <button @click="toggleSort('name')" class="flex-1 px-3 py-3 text-left hover:bg-gray-200 transition-colors cursor-pointer">
+                  种子 {{ getSortIcon('name') }}
+                </button>
+                <button @click="toggleSort('progress')" class="w-32 px-3 py-3 hover:bg-gray-200 transition-colors cursor-pointer">
+                  进度 {{ getSortIcon('progress') }}
+                </button>
+                <button @click="toggleSort('dlSpeed')" class="w-20 px-3 py-3 text-right hover:bg-gray-200 transition-colors cursor-pointer">
+                  下载 {{ getSortIcon('dlSpeed') }}
+                </button>
+                <button @click="toggleSort('upSpeed')" class="w-20 px-3 py-3 text-right hidden md:flex hover:bg-gray-200 transition-colors cursor-pointer">
+                  上传 {{ getSortIcon('upSpeed') }}
+                </button>
+                <button @click="toggleSort('eta')" class="w-16 px-3 py-3 text-right hidden lg:flex hover:bg-gray-200 transition-colors cursor-pointer whitespace-nowrap">
+                  剩余时间 {{ getSortIcon('eta') }}
+                </button>
                 <div class="w-16 px-3 py-3"></div>
               </div>
               <!-- 虚拟列表：直接成为滚动容器 -->
@@ -960,11 +853,21 @@ onUnmounted(() => {
               <!-- 表头 -->
               <div class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0 flex items-center text-xs text-gray-600 uppercase tracking-wide">
                 <div class="w-12 px-3 py-3"></div>
-                <div class="flex-1 px-3 py-3">种子</div>
-                <div class="w-32 px-3 py-3">进度</div>
-                <div class="w-20 px-3 py-3 text-right">下载</div>
-                <div class="w-20 px-3 py-3 text-right hidden md:flex">上传</div>
-                <div class="w-20 px-3 py-3 text-right hidden lg:flex">剩余</div>
+                <button @click="toggleSort('name')" class="flex-1 px-3 py-3 text-left hover:bg-gray-200 transition-colors cursor-pointer">
+                  种子 {{ getSortIcon('name') }}
+                </button>
+                <button @click="toggleSort('progress')" class="w-32 px-3 py-3 hover:bg-gray-200 transition-colors cursor-pointer">
+                  进度 {{ getSortIcon('progress') }}
+                </button>
+                <button @click="toggleSort('dlSpeed')" class="w-20 px-3 py-3 text-right hover:bg-gray-200 transition-colors cursor-pointer">
+                  下载 {{ getSortIcon('dlSpeed') }}
+                </button>
+                <button @click="toggleSort('upSpeed')" class="w-20 px-3 py-3 text-right hidden md:flex hover:bg-gray-200 transition-colors cursor-pointer">
+                  上传 {{ getSortIcon('upSpeed') }}
+                </button>
+                <button @click="toggleSort('eta')" class="w-16 px-3 py-3 text-right hidden lg:flex hover:bg-gray-200 transition-colors cursor-pointer whitespace-nowrap">
+                  剩余时间 {{ getSortIcon('eta') }}
+                </button>
                 <div class="w-16 px-3 py-3"></div>
               </div>
               <!-- 列表内容 -->
@@ -1027,13 +930,38 @@ onUnmounted(() => {
 
         <!-- 底部状态栏 -->
         <div class="border-t border-gray-200 px-4 py-2 text-xs text-gray-500 flex items-center justify-between shrink-0 bg-gray-50">
+          <!-- 左侧：统计信息 -->
           <div class="flex items-center gap-4">
-            <span>共 {{ sortedTorrents.length }} 个种子</span>
-            <span v-if="searchQuery" class="px-2 py-1 bg-gray-200 rounded text-gray-700">搜索: {{ searchQuery }}</span>
+            <div class="flex items-center gap-2">
+              <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+              <span class="font-medium text-gray-700">{{ stats.downloading }}</span>
+              <span>下载中</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="w-2 h-2 bg-cyan-500 rounded-full"></div>
+              <span class="font-medium text-gray-700">{{ stats.seeding }}</span>
+              <span>做种中</span>
+            </div>
+            <div class="hidden lg:flex items-center gap-2">
+              <span>总大小</span>
+              <span class="font-mono font-medium text-gray-700">{{ formatBytes(Array.from(torrentStore.torrents.values()).reduce((sum, t) => sum + t.size, 0)) }}</span>
+            </div>
           </div>
-          <div class="hidden md:flex items-center gap-4 font-mono">
-            <span>↓ {{ formatSpeed(stats.dlSpeed) }}</span>
-            <span>↑ {{ formatSpeed(stats.upSpeed) }}</span>
+
+          <!-- 右侧：速度（含限速） -->
+          <div class="flex items-center gap-4 font-mono">
+            <span>
+              ↓ {{ formatSpeed(stats.dlSpeed) }}
+              <span v-if="backendStore.serverState?.dlRateLimit && backendStore.serverState.dlRateLimit > 0" class="text-gray-400">
+                ({{ formatSpeed(backendStore.serverState.dlRateLimit) }})
+              </span>
+            </span>
+            <span>
+              ↑ {{ formatSpeed(stats.upSpeed) }}
+              <span v-if="backendStore.serverState?.upRateLimit && backendStore.serverState.upRateLimit > 0" class="text-gray-400">
+                ({{ formatSpeed(backendStore.serverState.upRateLimit) }})
+              </span>
+            </span>
           </div>
         </div>
       </main>

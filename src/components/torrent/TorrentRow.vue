@@ -54,7 +54,10 @@ const getHealthPercentage = (torrent: UnifiedTorrent): number => {
 }
 
 // 格式化ETA
-const formatETA = (eta: number): string => {
+const formatETA = (eta: number, progress: number, state: TorrentState): string => {
+  // 已完成或错误状态显示无限
+  if (progress >= 1.0 || state === 'error') return '∞'
+
   // 无限时间判断：-1、负数、非数值、或超过1年
   if (eta === -1 || eta <= 0 || !isFinite(eta) || eta >= 86400 * 365) return '∞'
 
@@ -68,10 +71,6 @@ const formatETA = (eta: number): string => {
   if (hours < 24) return `${hours}小时`
 
   const days = Math.floor(hours / 24)
-  const remainingHours = hours % 24
-  if (remainingHours > 0) {
-    return `${days}天${remainingHours}小时`
-  }
   return `${days}天`
 }
 </script>
@@ -169,11 +168,14 @@ const formatETA = (eta: number): string => {
     </div>
 
     <!-- ETA (大屏端) -->
-    <div class="col-eta px-3 py-2 w-20 text-right shrink-0 hidden lg:flex items-center justify-center">
+    <div class="col-eta px-3 py-2 w-16 text-right shrink-0 hidden lg:flex items-center justify-end">
       <div class="text-sm font-mono text-gray-600">
-        {{ torrent.eta ? formatETA(torrent.eta) : '-' }}
+        {{ formatETA(torrent.eta, torrent.progress, torrent.state) }}
       </div>
     </div>
+
+    <!-- 操作按钮 -->
+    <div class="w-16 px-3 py-2"></div>
   </div>
 </template>
 
