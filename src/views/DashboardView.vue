@@ -294,7 +294,7 @@ onUnmounted(() => {
           </div>
           <div class="hidden sm:block">
             <h1 class="text-base font-semibold text-gray-900">种子管理</h1>
-            <p class="text-xs text-gray-500">qBittorrent WebUI</p>
+            <p class="text-xs text-gray-500">{{ backendStore.backendName }} WebUI</p>
           </div>
         </div>
 

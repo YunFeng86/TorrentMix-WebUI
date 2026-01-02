@@ -1,4 +1,4 @@
-import { apiClient } from '@/api/client'
+import { apiClient, silentApiClient } from '@/api/client'
 import type { UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState } from './types'
 import type { BaseAdapter, AddTorrentParams } from './interface'
 
@@ -168,6 +168,38 @@ export class QbitAdapter implements BaseAdapter {
         'Content-Type': 'multipart/form-data'
       }
     })
+  }
+
+  // 登录认证
+  async login(username: string, password: string): Promise<void> {
+    const params = new URLSearchParams()
+    params.append('username', username)
+    params.append('password', password)
+
+    const response = await apiClient.post('/api/v2/auth/login', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+
+    if (response.data !== 'Ok.') {
+      throw new Error(response.data === 'Fails.'
+        ? '用户名或密码错误'
+        : `登录失败: ${response.data}`)
+    }
+  }
+
+  // 登出
+  async logout(): Promise<void> {
+    await apiClient.post('/api/v2/auth/logout').catch(() => {})
+  }
+
+  // 静默验证 session
+  async checkSession(): Promise<boolean> {
+    try {
+      await silentApiClient.get('/api/v2/app/version')
+      return true
+    } catch {
+      return false
+    }
   }
 
   // 归一化：qBittorrent → UnifiedTorrent

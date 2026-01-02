@@ -2,10 +2,12 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
+import { useBackendStore } from '@/store/backend'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const backendStore = useBackendStore()
 
 const username = ref('')
 const password = ref('')
@@ -98,7 +100,7 @@ async function handleSubmit() {
       <!-- 底部信息 -->
       <div class="text-center mt-8">
         <p class="text-xs text-gray-400">
-          由 qBittorrent WebUI 提供支持
+          {{ backendStore.backendName }} WebUI
         </p>
       </div>
     </div>

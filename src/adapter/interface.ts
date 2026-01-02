@@ -59,4 +59,22 @@ export interface BaseAdapter {
    * @param deleteFiles - 是否同时删除下载文件
    */
   delete(hashes: string[], deleteFiles: boolean): Promise<void>
+
+  /**
+   * 登录认证
+   * @param username - 用户名
+   * @param password - 密码
+   */
+  login(username: string, password: string): Promise<void>
+
+  /**
+   * 登出
+   */
+  logout(): Promise<void>
+
+  /**
+   * 静默验证当前 session 是否有效
+   * @returns true 表示已认证，false 表示需要登录
+   */
+  checkSession(): Promise<boolean>
 }

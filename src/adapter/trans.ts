@@ -170,6 +170,34 @@ export class TransAdapter implements BaseAdapter {
     }
   }
 
+  // 登录认证（Transmission 使用 HTTP Basic Auth）
+  async login(username: string, password: string): Promise<void> {
+    transClient.defaults.auth = { username, password }
+
+    // 验证凭证有效性
+    const { data } = await transClient.post<TRResponse>('', { method: 'session-get' })
+    if (data.result !== 'success') {
+      transClient.defaults.auth = undefined
+      throw new Error('认证失败')
+    }
+  }
+
+  // 登出
+  async logout(): Promise<void> {
+    transClient.defaults.auth = undefined
+  }
+
+  // 静默验证 session
+  async checkSession(): Promise<boolean> {
+    if (!transClient.defaults.auth) return false
+    try {
+      const { data } = await transClient.post<TRResponse>('', { method: 'session-get' })
+      return data.result === 'success'
+    } catch {
+      return false
+    }
+  }
+
   /**
    * 归一化：Transmission → UnifiedTorrent
    */

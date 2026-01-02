@@ -23,6 +23,12 @@ export const useBackendStore = defineStore('backend', () => {
   // 是否为 Transmission
   const isTrans = computed(() => backendType.value === 'trans')
 
+  // 后端显示名称
+  const backendName = computed(() =>
+    backendType.value === 'qbit' ? 'qBittorrent' :
+    backendType.value === 'trans' ? 'Transmission' : '种子管理器'
+  )
+
   /**
    * 设置 Adapter 实例
    * @param a - Adapter 实例
@@ -47,6 +53,7 @@ export const useBackendStore = defineStore('backend', () => {
     isInitialized,
     isQbit,
     isTrans,
+    backendName,
     setAdapter,
     clearAdapter
   }
