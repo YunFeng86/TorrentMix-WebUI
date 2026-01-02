@@ -1,3 +1,93 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-gray-200;
+  }
+  body {
+    @apply font-sans text-gray-900 antialiased;
+    font-feature-settings: 'cv11', 'ss01';
+    font-variation-settings: 'opsz' 32;
+  }
+  
+  /* 优化滚动条样式 */
+  ::-webkit-scrollbar {
+    @apply w-1;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-gray-400;
+  }
+}
+
+@layer components {
+  /* Vercel风格按钮 */
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium rounded-lg transition-all duration-150;
+    @apply border border-gray-200 bg-white text-gray-900;
+    @apply hover:border-gray-300 hover:bg-gray-50;
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500;
+    @apply disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  .btn-primary {
+    @apply bg-black text-white border-black;
+    @apply hover:bg-gray-800 hover:border-gray-800;
+  }
+  
+  .btn-destructive {
+    @apply bg-red-500 text-white border-red-500;
+    @apply hover:bg-red-600 hover:border-red-600;
+  }
+  
+  /* 输入框 */
+  .input {
+    @apply w-full px-3 py-2 text-sm rounded-lg border border-gray-200;
+    @apply bg-white placeholder:text-gray-400;
+    @apply focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500;
+    @apply transition-all duration-150;
+  }
+  
+  /* 卡片 */
+  .card {
+    @apply bg-white rounded-xl border border-gray-200 shadow-sm;
+  }
+  
+  /* 表格行hover效果 */
+  .table-row {
+    @apply hover:bg-gray-50 transition-colors duration-150;
+    @apply border-b border-gray-100;
+  }
+  
+  .table-row:last-child {
+    @apply border-b-0;
+  }
+  
+  /* 高密度布局 */
+  .dense {
+    @apply text-xs leading-tight;
+  }
+  
+  /* 状态标签 */
+  .status-badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  /* 进度条 */
+  .progress-bar {
+    @apply h-1.5 bg-gray-200 rounded-full overflow-hidden;
+  }
+  
+  .progress-fill {
+    @apply h-full transition-all duration-300 ease-out rounded-full;
+  }
+}

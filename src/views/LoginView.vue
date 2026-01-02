@@ -26,59 +26,85 @@ async function handleSubmit() {
 </script>
 
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gradient-to-br from-gray-50 to-gray-100 px-4">
-    <div class="max-w-md w-full">
-      <!-- Logo / Title -->
+  <div class="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div class="w-full max-w-sm">
+      <!-- Logo 区域 -->
       <div class="text-center mb-8">
-        <div class="inline-flex items-center justify-center w-16 h-16 bg-blue-500 rounded-2xl mb-4">
-          <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+        <div class="inline-flex items-center justify-center w-12 h-12 bg-black rounded-xl mb-4">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12" />
           </svg>
         </div>
-        <h1 class="text-3xl font-bold text-gray-900">qBittorrent WebUI</h1>
-        <p class="text-gray-500 mt-2">请登录以继续</p>
+        <h1 class="text-2xl font-semibold text-gray-900 mb-2">登录</h1>
+        <p class="text-gray-500 text-sm">访问种子管理系统</p>
       </div>
 
-      <!-- Login Form -->
-      <div class="bg-white rounded-2xl shadow-xl p-8">
-        <form @submit.prevent="handleSubmit" class="space-y-5">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
+      <!-- 登录表单 -->
+      <div class="card p-6">
+        <form @submit.prevent="handleSubmit" class="space-y-4">
+          <!-- 用户名 -->
+          <div class="space-y-2">
+            <label class="block text-sm font-medium text-gray-700">
+              用户名
+            </label>
             <input
               v-model="username"
               type="text"
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              class="input"
               placeholder="输入用户名"
               required
               autocomplete="username"
             />
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">密码</label>
+
+          <!-- 密码 -->
+          <div class="space-y-2">
+            <label class="block text-sm font-medium text-gray-700">
+              密码
+            </label>
             <input
               v-model="password"
               type="password"
-              class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              class="input"
               placeholder="输入密码"
               required
               autocomplete="current-password"
             />
           </div>
-          <p v-if="error" class="text-red-500 text-sm text-center">{{ error }}</p>
+
+          <!-- 错误提示 -->
+          <div v-if="error" class="p-3 bg-red-50 border border-red-200 rounded-lg">
+            <div class="flex items-center gap-2">
+              <svg class="w-4 h-4 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+              <p class="text-sm text-red-500 font-medium">{{ error }}</p>
+            </div>
+          </div>
+
+          <!-- 登录按钮 -->
           <button
             type="submit"
             :disabled="loading"
-            class="w-full bg-blue-500 text-white py-3 rounded-lg font-medium hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            class="btn-primary w-full py-2.5 font-medium"
           >
-            {{ loading ? '登录中...' : '登录' }}
+            <div class="flex items-center justify-center gap-2">
+              <svg v-if="loading" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              {{ loading ? '登录中...' : '登录' }}
+            </div>
           </button>
         </form>
       </div>
 
-      <!-- Footer -->
-      <p class="text-center text-gray-400 text-sm mt-8">
-        WebUI for qBittorrent
-      </p>
+      <!-- 底部信息 -->
+      <div class="text-center mt-8">
+        <p class="text-xs text-gray-400">
+          由 qBittorrent WebUI 提供支持
+        </p>
+      </div>
     </div>
   </div>
 </template>
