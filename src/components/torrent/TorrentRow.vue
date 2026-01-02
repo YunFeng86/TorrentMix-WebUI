@@ -145,25 +145,15 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
 
     <!-- 下载速度 -->
     <div class="col-dl-speed px-3 py-2 w-20 text-right shrink-0">
-      <div class="space-y-0.5">
-        <div class="text-sm font-mono text-gray-900">
-          {{ formatSpeed(torrent.dlspeed) }}
-        </div>
-        <div class="text-xs text-gray-500">
-          ↓
-        </div>
+      <div class="text-sm font-mono text-gray-900 whitespace-nowrap">
+        ↓ {{ formatSpeed(torrent.dlspeed) }}
       </div>
     </div>
 
     <!-- 上传速度 (PC端) -->
-    <div class="col-ul-speed px-3 py-2 w-20 text-right shrink-0 hidden md:flex">
-      <div class="space-y-0.5">
-        <div class="text-sm font-mono text-gray-900">
-          {{ formatSpeed(torrent.upspeed) }}
-        </div>
-        <div class="text-xs text-gray-500">
-          ↑
-        </div>
+    <div class="col-ul-speed px-3 py-2 w-20 text-right shrink-0 hidden md:block">
+      <div class="text-sm font-mono text-gray-900 whitespace-nowrap">
+        ↑ {{ formatSpeed(torrent.upspeed) }}
       </div>
     </div>
 
