@@ -13,8 +13,9 @@ import TorrentRow from '@/components/torrent/TorrentRow.vue'
 import TorrentCard from '@/components/torrent/TorrentCard.vue'
 import AddTorrentDialog from '@/components/AddTorrentDialog.vue'
 import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
+import TorrentBottomPanel from '@/components/TorrentBottomPanel.vue'
 import Icon from '@/components/Icon.vue'
-import { formatSpeed } from '@/utils/format'
+import { formatSpeed, formatBytes } from '@/utils/format'
 
 // 虚拟滚动阈值：超过 500 个种子时启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 500
@@ -50,6 +51,120 @@ watch(searchQuery, (val) => updateSearch(val))
 const showAddDialog = ref(false)
 const addLoading = ref(false)
 const addError = ref('')
+
+// 底部详情面板
+const showDetailPanel = ref(false)
+const selectedTorrent = ref<UnifiedTorrent | null>(null)
+const detailPanelHeight = ref(350)
+
+// 选择种子并显示详情
+function selectTorrentForDetail(hash: string, event?: Event) {
+  const torrent = torrentStore.torrents.get(hash)
+  if (!torrent) return
+
+  // 检查是否是特殊按键点击
+  const isCtrlClick = event && (event as MouseEvent).ctrlKey
+  const isShiftClick = event && (event as MouseEvent).shiftKey
+  
+  if (isCtrlClick) {
+    // Ctrl+点击：切换选择状态，不改变详情面板
+    toggleSelect(hash)
+    return
+  }
+  
+  if (isShiftClick && selectedHashes.value.size > 0) {
+    // Shift+点击：范围选择
+    const allTorrents = sortedTorrents.value
+    const lastSelected = Array.from(selectedHashes.value)[selectedHashes.value.size - 1]
+    const currentIndex = allTorrents.findIndex(t => t.id === hash)
+    const lastIndex = allTorrents.findIndex(t => t.id === lastSelected)
+    
+    if (currentIndex !== -1 && lastIndex !== -1) {
+      const start = Math.min(currentIndex, lastIndex)
+      const end = Math.max(currentIndex, lastIndex)
+      
+      selectedHashes.value.clear()
+      for (let i = start; i <= end; i++) {
+        const t = allTorrents[i]
+        if (t) selectedHashes.value.add(t.id)
+      }
+    }
+    return
+  }
+
+  // 普通点击：选择种子并显示详情
+  selectedTorrent.value = torrent
+  showDetailPanel.value = true
+  
+  // 单选模式
+  selectedHashes.value.clear()
+  selectedHashes.value.add(hash)
+}
+
+// 关闭详情面板
+function closeDetailPanel() {
+  showDetailPanel.value = false
+  selectedTorrent.value = null
+}
+
+// 调整面板高度
+function resizeDetailPanel(height: number) {
+  detailPanelHeight.value = height
+}
+
+// 键盘导航
+const focusedIndex = ref(-1)
+
+// 键盘事件处理
+function handleKeyDown(e: KeyboardEvent) {
+  if (sortedTorrents.value.length === 0) return
+  
+  const maxIndex = sortedTorrents.value.length - 1
+  
+  switch (e.key) {
+    case 'ArrowUp':
+      e.preventDefault()
+      focusedIndex.value = Math.max(0, focusedIndex.value - 1)
+      selectTorrentByIndex(focusedIndex.value)
+      break
+      
+    case 'ArrowDown':
+      e.preventDefault()
+      if (focusedIndex.value === -1) {
+        focusedIndex.value = 0
+      } else {
+        focusedIndex.value = Math.min(maxIndex, focusedIndex.value + 1)
+      }
+      selectTorrentByIndex(focusedIndex.value)
+      break
+      
+    case 'Enter':
+    case ' ':
+      e.preventDefault()
+      if (focusedIndex.value >= 0) {
+        const torrent = sortedTorrents.value[focusedIndex.value]
+        if (!torrent) break
+        if (e.ctrlKey || e.key === ' ') {
+          toggleSelect(torrent.id)
+        } else {
+          selectTorrentForDetail(torrent.id)
+        }
+      }
+      break
+      
+    case 'Escape':
+      closeDetailPanel()
+      break
+  }
+}
+
+// 通过索引选择种子
+function selectTorrentByIndex(index: number) {
+  const torrent = sortedTorrents.value[index]
+  if (torrent) {
+    selectTorrentForDetail(torrent.id)
+  }
+}
 
 // 监听屏幕尺寸变化
 const handleResize = () => {
@@ -147,15 +262,78 @@ const filteredTorrents = computed(() => {
   return result
 })
 
+// ========== 阶段 4: 排序功能 ==========
+
+// 排序字段和方向
+type SortField = 'name' | 'size' | 'progress' | 'dlSpeed' | 'upSpeed' | 'addedTime' | 'ratio'
+type SortDirection = 'asc' | 'desc'
+
+const sortField = ref<SortField>('name')
+const sortDirection = ref<SortDirection>('asc')
+const showSortMenu = ref(false)
+
+// 排序字段标签映射
+const sortFieldLabels: Record<SortField, string> = {
+  name: '名称',
+  size: '大小',
+  progress: '进度',
+  dlSpeed: '下载速度',
+  upSpeed: '上传速度',
+  addedTime: '添加时间',
+  ratio: '分享率'
+}
+
+// 切换排序字段
+function setSortField(field: SortField) {
+  if (sortField.value === field) {
+    // 同一字段切换方向
+    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
+  } else {
+    sortField.value = field
+    sortDirection.value = 'desc'  // 新字段默认降序（数值类）
+    if (field === 'name') sortDirection.value = 'asc'  // 名称默认升序
+  }
+  showSortMenu.value = false
+}
+
+// 排序函数
+function compareTorrents(a: UnifiedTorrent, b: UnifiedTorrent): number {
+  // 下载中的永远优先（保持现有逻辑）
+  if (a.state === 'downloading' && b.state !== 'downloading') return -1
+  if (b.state === 'downloading' && a.state !== 'downloading') return 1
+
+  // 按选定字段排序
+  let compare = 0
+  switch (sortField.value) {
+    case 'name':
+      compare = a.name.localeCompare(b.name, 'zh-CN')
+      break
+    case 'size':
+      compare = a.size - b.size
+      break
+    case 'progress':
+      compare = a.progress - b.progress
+      break
+    case 'dlSpeed':
+      compare = a.dlspeed - b.dlspeed
+      break
+    case 'upSpeed':
+      compare = a.upspeed - b.upspeed
+      break
+    case 'addedTime':
+      compare = a.addedTime - b.addedTime
+      break
+    case 'ratio':
+      compare = a.ratio - b.ratio
+      break
+  }
+
+  return sortDirection.value === 'asc' ? compare : -compare
+}
+
 // 转换为数组并排序
 const sortedTorrents = computed(() => {
-  return Array.from(filteredTorrents.value.values()).sort((a, b) => {
-    // 下载中的优先
-    if (a.state === 'downloading' && b.state !== 'downloading') return -1
-    if (b.state === 'downloading' && a.state !== 'downloading') return 1
-    // 然后按名称排序
-    return a.name.localeCompare(b.name)
-  })
+  return Array.from(filteredTorrents.value.values()).sort(compareTorrents)
 })
 
 // 是否使用虚拟滚动（超过阈值时启用）
@@ -298,14 +476,83 @@ async function handleAddTorrent(params: AddTorrentParams) {
   }
 }
 
+// 处理种子行操作（来自 TorrentRow 的 action 事件）
+async function handleTorrentAction(action: string, hash: string) {
+  try {
+    switch (action) {
+      case 'pause':
+        await adapter.value.pause([hash])
+        break
+      case 'resume':
+        await adapter.value.resume([hash])
+        break
+      case 'recheck':
+        await adapter.value.recheck(hash)
+        break
+      case 'forceStart':
+        await adapter.value.forceStart(hash, true)
+        break
+      case 'delete': {
+        const torrent = torrentStore.torrents.get(hash)
+        const deleteFiles = confirm(
+          `是否同时删除下载文件？\n\n种子：${torrent?.name || hash}`
+        )
+        if (deleteFiles) {
+          if (!confirm(`⚠️ 确定删除并删除文件吗？\n\n此操作不可恢复！`)) return
+        } else {
+          if (!confirm(`确定删除种子吗？\n（仅删除种子，保留文件）`)) return
+        }
+        await adapter.value.delete([hash], deleteFiles)
+        break
+      }
+    }
+    await immediateRefresh()
+  } catch (err) {
+    console.error('[Dashboard] Action failed:', err)
+    alert(err instanceof Error ? err.message : '操作失败')
+  }
+}
+
+// 批量操作：重新校验选中项
+async function handleRecheckSelected() {
+  if (selectedHashes.value.size === 0) return
+  const hashes = Array.from(selectedHashes.value)
+  try {
+    for (const hash of hashes) {
+      await adapter.value.recheck(hash)
+    }
+    await immediateRefresh()
+  } catch (err) {
+    console.error('[Dashboard] Recheck failed:', err)
+    alert(err instanceof Error ? err.message : '重新校验失败')
+  }
+}
+
+// 批量操作：强制开始选中项
+async function handleForceStartSelected() {
+  if (selectedHashes.value.size === 0) return
+  const hashes = Array.from(selectedHashes.value)
+  try {
+    for (const hash of hashes) {
+      await adapter.value.forceStart(hash, true)
+    }
+    await immediateRefresh()
+  } catch (err) {
+    console.error('[Dashboard] Force start failed:', err)
+    alert(err instanceof Error ? err.message : '强制开始失败')
+  }
+}
+
 onMounted(() => {
   startPolling()
   window.addEventListener('resize', handleResize)
+  window.addEventListener('keydown', handleKeyDown)
   handleResize() // 初始化
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
+  window.removeEventListener('keydown', handleKeyDown)
 })
 </script>
 
@@ -351,6 +598,33 @@ onUnmounted(() => {
 
       <!-- 速度显示 -->
       <div class="flex items-center gap-6">
+        <!-- 全局服务器状态 (大屏幕显示) -->
+        <div v-if="backendStore.serverState" class="hidden xl:flex items-center gap-4 text-xs text-gray-500">
+          <!-- 磁盘剩余空间 -->
+          <div class="flex items-center gap-1" :title="`磁盘剩余: ${formatBytes(backendStore.serverState.freeSpaceOnDisk)}`">
+            <Icon name="hard-drive" :size="14" />
+            <span class="font-mono">{{ formatBytes(backendStore.serverState.freeSpaceOnDisk) }}</span>
+          </div>
+          <!-- 全局 Peer 连接数 -->
+          <div class="flex items-center gap-1" :title="`全局 Peer 连接: ${backendStore.serverState.peers}`">
+            <Icon name="users" :size="14" />
+            <span class="font-mono">{{ backendStore.serverState.peers }}</span>
+          </div>
+          <!-- 全局限速 (如果设置了) -->
+          <div v-if="backendStore.serverState.dlRateLimit > 0 || backendStore.serverState.upRateLimit > 0" class="flex items-center gap-1">
+            <Icon name="gauge" :size="14" />
+            <span class="font-mono">
+              {{ backendStore.serverState.dlRateLimit > 0 ? formatSpeed(backendStore.serverState.dlRateLimit) : '∞' }}/
+              {{ backendStore.serverState.upRateLimit > 0 ? formatSpeed(backendStore.serverState.upRateLimit) : '∞' }}
+            </span>
+          </div>
+          <!-- Alt 速率状态 -->
+          <div v-if="backendStore.serverState.useAltSpeed" class="flex items-center gap-1 text-orange-500" title="临时限速已启用">
+            <Icon name="timer" :size="14" />
+            <span>限速中</span>
+          </div>
+        </div>
+
         <div class="hidden md:flex items-center gap-4">
           <div class="flex items-center gap-2">
             <Icon name="download" color="blue" :size="16" />
@@ -539,23 +813,78 @@ onUnmounted(() => {
                     title="暂停">
               <Icon name="pause" color="gray" :size="16" />
             </button>
-            <div class="w-px h-8 bg-gray-200 mx-2"></div>
             <button @click="handleDelete"
                     :disabled="selectedHashes.size === 0"
-                    class="btn-destructive p-2 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
+                    class="btn p-2 hover:bg-red-50 text-red-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:text-gray-400 transition-all duration-150"
                     title="删除">
-              <Icon name="trash-2" color="white" :size="16" />
+              <Icon name="trash-2" :size="16" />
+            </button>
+            <div class="w-px h-8 bg-gray-200 mx-2"></div>
+            <!-- 更多操作（选中后可用） -->
+            <button @click="handleRecheckSelected"
+                    :disabled="selectedHashes.size === 0"
+                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
+                    title="重新校验">
+              <Icon name="refresh-cw" :size="16" />
+            </button>
+            <button @click="handleForceStartSelected"
+                    :disabled="selectedHashes.size === 0"
+                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
+                    title="强制开始">
+              <Icon name="zap" :size="16" />
             </button>
           </div>
 
-          <!-- 选择器 -->
-          <div class="flex items-center gap-3">
-            <button @click="selectAll" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150">
-              {{ selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选' }}
-            </button>
-            <span v-if="selectedHashes.size > 0" class="text-sm text-blue-500 font-medium">
-              已选 {{ selectedHashes.size }} 项
-            </span>
+          <!-- 选择器 & 排序 -->
+          <div class="flex items-center gap-4">
+            <div class="flex items-center gap-3">
+              <button @click="selectAll" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150">
+                {{ selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选' }}
+              </button>
+              <span v-if="selectedHashes.size > 0" class="text-sm text-blue-500 font-medium">
+                已选 {{ selectedHashes.size }} 项
+              </span>
+            </div>
+
+            <!-- 排序下拉选择器 -->
+            <div class="relative">
+              <button
+                @click="setSortField('name')"
+                class="flex items-center gap-2 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-700 transition-colors"
+              >
+                <Icon name="arrow-up-down" :size="14" />
+                <span>{{ sortFieldLabels[sortField] }}</span>
+                <Icon name="chevron-up" :size="12" :class="{ 'rotate-180': sortDirection === 'desc' }" />
+              </button>
+
+              <!-- 排序下拉菜单 -->
+              <Transition
+                enter-active-class="transition-opacity duration-150"
+                enter-from-class="opacity-0"
+                enter-to-class="opacity-100"
+                leave-active-class="transition-opacity duration-150"
+                leave-from-class="opacity-100"
+                leave-to-class="opacity-0"
+              >
+                <div
+                  v-if="showSortMenu"
+                  v-click-outside="() => showSortMenu = false"
+                  class="absolute top-full left-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 overflow-hidden z-20 min-w-[160px]"
+                >
+                  <button
+                    v-for="(label, field) in sortFieldLabels"
+                    :key="field"
+                    @click="setSortField(field as SortField)"
+                    :class="`w-full px-4 py-2 text-left text-sm hover:bg-gray-50 flex items-center justify-between ${
+                      sortField === field ? 'bg-gray-100 font-medium' : ''
+                    }`"
+                  >
+                    <span>{{ label }}</span>
+                    <Icon v-if="sortField === field" name="check" :size="14" class="text-blue-500" />
+                  </button>
+                </div>
+              </Transition>
+            </div>
           </div>
 
           <!-- 搜索框 -->
@@ -572,8 +901,11 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- 种子列表 -->
-        <div class="flex-1 overflow-auto">
+        <!-- 种子列表容器 -->
+        <div 
+          class="flex-1 overflow-auto"
+          :style="{ height: showDetailPanel ? `calc(100% - ${detailPanelHeight + 1}px)` : '100%' }"
+        >
           <!-- 桌面端列表视图 -->
           <div class="hidden md:block h-full">
             <!-- 虚拟滚动（大量种子时） -->
@@ -592,7 +924,9 @@ onUnmounted(() => {
                 v-if="sortedTorrents.length > 0"
                 :torrents="sortedTorrents"
                 :selected-hashes="selectedHashes"
-                @click="toggleSelect"
+                @click="selectTorrentForDetail"
+                @toggle-select="toggleSelect"
+                @action="handleTorrentAction"
               />
               <div v-else class="px-4 py-16 text-center">
                 <div class="flex flex-col items-center gap-4">
@@ -632,7 +966,9 @@ onUnmounted(() => {
                 :key="torrent.id"
                 :torrent="torrent"
                 :selected="selectedHashes.has(torrent.id)"
-                @click="toggleSelect(torrent.id)"
+                @click="selectTorrentForDetail(torrent.id, $event)"
+                @toggle-select="toggleSelect($event.detail)"
+                @action="handleTorrentAction"
               />
             </div>
           </div>
@@ -655,7 +991,9 @@ onUnmounted(() => {
                 :key="torrent.id"
                 :torrent="torrent"
                 :selected="selectedHashes.has(torrent.id)"
-                @click="toggleSelect(torrent.id)"
+                @click="selectTorrentForDetail(torrent.id)"
+                @toggle-select="toggleSelect($event.detail)"
+                @action="handleTorrentAction"
               />
             </div>
           </div>
@@ -680,6 +1018,16 @@ onUnmounted(() => {
       :open="showAddDialog"
       @close="showAddDialog = false"
       @add="handleAddTorrent"
+    />
+
+    <!-- 底部详情面板 -->
+    <TorrentBottomPanel
+      :torrent="selectedTorrent"
+      :visible="showDetailPanel"
+      :height="detailPanelHeight"
+      @close="closeDetailPanel"
+      @resize="resizeDetailPanel"
+      @action="handleTorrentAction"
     />
   </div>
 </template>

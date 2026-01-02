@@ -1,5 +1,9 @@
 import { apiClient, silentApiClient } from '@/api/client'
-import type { UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState, Category, ServerState } from './types'
+import type {
+  UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState, Category, ServerState,
+  UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
+  QBTorrentProperties, QBFile, QBTracker, QBPeer
+} from './types'
 import type { BaseAdapter, AddTorrentParams, FetchListResult } from './interface'
 
 // 状态映射表 - qBittorrent 完整状态映射
@@ -294,5 +298,197 @@ export class QbitAdapter implements BaseAdapter {
       category: raw.category || existing?.category,
       tags: raw.tags ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : existing?.tags
     }
+  }
+
+  // 获取种子详情
+  async fetchDetail(hash: string): Promise<UnifiedTorrentDetail> {
+    // 并行请求 properties、files、trackers、peers
+    const [propsRes, filesRes, trackersRes, peersRes] = await Promise.all([
+      apiClient.get<QBTorrentProperties>('/api/v2/torrents/properties', {
+        params: { hash }
+      }),
+      apiClient.get<QBFile[]>('/api/v2/torrents/files', {
+        params: { hash }
+      }),
+      apiClient.get<QBTracker[]>('/api/v2/torrents/trackers', {
+        params: { hash }
+      }),
+      apiClient.get<{ peers: Record<string, QBPeer> }>('/api/v2/sync/torrentPeers', {
+        params: { hash }
+      }).catch(() => ({ data: { peers: {} } }))  // peers 可能失败，降级处理
+    ])
+
+    const props = propsRes.data
+    const filesArray = filesRes.data || []
+    const trackers = trackersRes.data || []
+    const peers = Object.values(peersRes.data?.peers || {}) as QBPeer[]
+
+    return {
+      hash: props.hash,
+      name: props.name,
+      size: props.size,
+      completed: props.completed,
+      uploaded: props.uploaded,
+      dlLimit: props.dl_limit,
+      upLimit: props.up_limit,
+      seedingTime: props.seeding_time,
+      addedTime: props.added_on,
+      completionOn: props.completion_on,
+      savePath: props.save_path,
+      category: props.category,
+      tags: props.tags ? props.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+      connections: props.connections_limit,
+      numSeeds: props.num_complete,
+      numLeechers: props.num_incomplete,
+      files: filesArray.map(f => this.normalizeFile(f)),
+      trackers: trackers.map(t => this.normalizeTracker(t)),
+      peers: peers.map(p => this.normalizePeer(p))
+    }
+  }
+
+  // 归一化文件信息
+  private normalizeFile(file: QBFile): TorrentFile {
+    let priority: TorrentFile['priority'] = 'normal'
+    if (file.priority === 1) priority = 'high'
+    else if (file.priority === 0) priority = 'normal'
+    else if (file.priority === -1) priority = 'low'
+    else if (file.priority === -2) priority = 'do_not_download'
+
+    return {
+      id: file.id,
+      name: file.name,
+      size: file.size,
+      progress: file.progress,
+      priority
+    }
+  }
+
+  // 归一化 Tracker 信息
+  private normalizeTracker(tracker: QBTracker): Tracker {
+    // qB tracker status: 0=disabled, 1=not working, 2=working, 3=updating, 4=not contacted yet
+    let status: Tracker['status'] = 'not_working'
+    if (tracker.status === 0) status = 'disabled'
+    else if (tracker.status === 2) status = 'working'
+    else if (tracker.status === 3) status = 'updating'
+    else if (tracker.status === 4) status = 'not_working'
+
+    return {
+      url: tracker.url,
+      status,
+      msg: tracker.msg,
+      peers: tracker.num_peers,
+      tier: tracker.tier
+    }
+  }
+
+  // 归一化 Peer 信息
+  private normalizePeer(peer: QBPeer): Peer {
+    return {
+      ip: peer.ip,
+      port: peer.port,
+      client: peer.client,
+      progress: peer.progress,
+      dlSpeed: peer.dl_speed,
+      upSpeed: peer.up_speed,
+      downloaded: peer.downloaded,
+      uploaded: peer.uploaded
+    }
+  }
+
+  // ========== 阶段 3: 新增种子操作 ==========
+
+  // 重新校验
+  async recheck(hash: string): Promise<void> {
+    await apiClient.post('/api/v2/torrents/recheck', null, {
+      params: { hashes: hash }
+    })
+  }
+
+  // 重新汇报
+  async reannounce(hash: string): Promise<void> {
+    await apiClient.post('/api/v2/torrents/reannounce', null, {
+      params: { hashes: hash }
+    })
+  }
+
+  // 强制开始
+  async forceStart(hash: string, value: boolean): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setForceStart', null, {
+      params: {
+        hashes: hash,
+        value: value.toString()
+      }
+    })
+  }
+
+  // 设置下载限速
+  async setDownloadLimit(hash: string, limit: number): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setDlLimit', null, {
+      params: {
+        hashes: hash,
+        limit: limit.toString()
+      }
+    })
+  }
+
+  // 设置上传限速
+  async setUploadLimit(hash: string, limit: number): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setUpLimit', null, {
+      params: {
+        hashes: hash,
+        limit: limit.toString()
+      }
+    })
+  }
+
+  // 设置保存位置
+  async setLocation(hash: string, location: string): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setLocation', null, {
+      params: {
+        hashes: hash,
+        location
+      }
+    })
+  }
+
+  // 设置分类
+  async setCategory(hash: string, category: string): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setCategory', null, {
+      params: {
+        hashes: hash,
+        category: category || ''  // 空字符串移除分类
+      }
+    })
+  }
+
+  // 设置标签
+  async setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
+    const tagsStr = tags.join(',')
+    await apiClient.post('/api/v2/torrents/setTags', null, {
+      params: {
+        hashes: hash,
+        tags: tagsStr,
+        operation: mode  // 'set' | 'add' | 'remove'
+      }
+    })
+  }
+
+  // 设置文件优先级
+  async setFilePriority(hash: string, fileIds: number[], priority: 'high' | 'normal' | 'low' | 'do_not_download'): Promise<void> {
+    // qBittorrent 优先级映射: 0=normal, 1=high, -1=low, -2=do_not_download
+    const priorityMap: Record<typeof priority, number> = {
+      high: 1,
+      normal: 0,
+      low: -1,
+      do_not_download: -2
+    }
+
+    await apiClient.post('/api/v2/torrents/filePrio', null, {
+      params: {
+        hash,
+        id: fileIds.join(','),
+        priority: priorityMap[priority].toString()
+      }
+    })
   }
 }

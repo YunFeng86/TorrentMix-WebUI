@@ -9,6 +9,23 @@ import { QbitAdapter } from './adapter/qbit'
 import { TransAdapter } from './adapter/trans'
 import { useBackendStore } from './store/backend'
 
+// 全局指令：点击外部关闭
+const vClickOutside = {
+  mounted(el: HTMLElement & { _clickOutside?: (event: MouseEvent) => void }, binding: { value: () => void }) {
+    el._clickOutside = (event: MouseEvent) => {
+      if (!(el === event.target || el.contains(event.target as Node))) {
+        binding.value()
+      }
+    }
+    document.addEventListener('click', el._clickOutside as EventListener)
+  },
+  unmounted(el: HTMLElement & { _clickOutside?: (event: MouseEvent) => void }) {
+    if (el._clickOutside) {
+      document.removeEventListener('click', el._clickOutside as EventListener)
+    }
+  }
+}
+
 /**
  * 应用启动引导流程
  *
@@ -23,6 +40,9 @@ async function bootstrap() {
   const pinia = createPinia()
 
   app.use(pinia)
+
+  // 注册全局指令
+  app.directive('click-outside', vClickOutside)
 
   // 探测后端类型并注入 Adapter（detectBackend 自动处理代理逻辑）
   const backendType = await detectBackend()

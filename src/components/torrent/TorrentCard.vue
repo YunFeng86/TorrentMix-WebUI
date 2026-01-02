@@ -3,7 +3,20 @@ import type { UnifiedTorrent } from '@/adapter/types'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
 import Icon from '@/components/Icon.vue'
 
-defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
+const props = defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
+
+defineEmits<{
+  click: []
+}>()
+
+// 处理复选框点击
+function handleCheckboxClick(e: Event) {
+  e.stopPropagation()
+  ;(e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('toggle-select', {
+    bubbles: true,
+    detail: props.torrent.id
+  }))
+}
 
 type TorrentState = UnifiedTorrent['state']
 
@@ -51,11 +64,12 @@ const getStateText = (state: TorrentState) => {
   <div
     class="card p-4 cursor-pointer transition-all duration-150 hover:shadow-md active:scale-[0.98]"
     :class="{ 'ring-2 ring-blue-200 border-blue-300': selected }"
+    @click.stop="$emit('click')"
   >
     <!-- 头部：名称和状态 -->
     <div class="flex items-start justify-between gap-3 mb-3">
       <!-- 选择器 -->
-      <div class="mt-1">
+      <div class="mt-1" @click.stop="handleCheckboxClick">
         <input
           type="checkbox"
           :checked="selected"

@@ -33,6 +33,8 @@ export interface UnifiedTorrent {
   // 扩展字段
   category?: string;
   tags?: string[];
+  numSeeds?: number;   // 已连接的种子数（用于健康度计算）
+  numPeers?: number;   // 已连接的 Peer 数（用于健康度计算）
 }
 
 // 分类接口
@@ -97,4 +99,114 @@ export interface QBServerState {
   use_alt_speed: boolean;
   alt_dl_limit: number;
   alt_up_limit: number;
+}
+
+// ============ 种子详情相关接口 ============
+
+// 统一种子详情接口
+export interface UnifiedTorrentDetail {
+  // 基本信息
+  hash: string
+  name: string
+  size: number
+  completed: number      // 已下载字节数
+  uploaded: number       // 已上传字节数
+  dlLimit: number        // 下载限速 (-1 无限制)
+  upLimit: number        // 上传限速 (-1 无限制)
+  seedingTime: number    // 做种时长(秒)
+  addedTime: number
+  completionOn: number   // 完成时间戳 (0 未完成)
+  savePath: string
+  category: string
+  tags: string[]
+
+  // 连接信息
+  connections: number
+  numSeeds: number
+  numLeechers: number
+
+  // 详情数据
+  files: TorrentFile[]
+  trackers: Tracker[]
+  peers: Peer[]
+}
+
+// 文件信息
+export interface TorrentFile {
+  id: number
+  name: string
+  size: number
+  progress: number
+  priority: 'high' | 'normal' | 'low' | 'do_not_download'
+}
+
+// Tracker 信息
+export interface Tracker {
+  url: string
+  status: 'working' | 'updating' | 'not_working' | 'disabled'
+  msg: string
+  peers: number
+  tier: number
+}
+
+// Peer 信息
+export interface Peer {
+  ip: string
+  port: number
+  client: string
+  progress: number
+  dlSpeed: number
+  upSpeed: number
+  downloaded: number
+  uploaded: number
+}
+
+// qBittorrent 种子属性响应
+export interface QBTorrentProperties {
+  hash: string
+  name: string
+  size: number
+  completed: number
+  uploaded: number
+  dl_limit: number
+  up_limit: number
+  seeding_time: number
+  added_on: number
+  completion_on: number
+  save_path: string
+  category: string
+  tags: string
+  connections_limit: number
+  num_complete: number
+  num_incomplete: number
+}
+
+// qBittorrent 文件信息
+export interface QBFile {
+  id: number
+  name: string
+  size: number
+  progress: number
+  priority: number
+}
+
+// qBittorrent Tracker 信息
+export interface QBTracker {
+  url: string
+  status: number
+  msg: string
+  num_peers: number
+  tier: number
+}
+
+// qBittorrent Peer 信息
+export interface QBPeer {
+  ip: string
+  port: number
+  client: string
+  progress: number
+  dl_speed: number
+  up_speed: number
+  downloaded: number
+  uploaded: number
 }

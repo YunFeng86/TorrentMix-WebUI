@@ -1,9 +1,27 @@
 <script setup lang="ts">
 import type { UnifiedTorrent } from '@/adapter/types'
-import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
+import { formatBytes, formatSpeed } from '@/utils/format'
 import Icon from '@/components/Icon.vue'
 
-defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
+const props = defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
+
+const emit = defineEmits<{
+  click: [event: Event]
+}>()
+
+// 处理复选框点击，切换选择状态
+function handleCheckboxClick(e: Event) {
+  e.stopPropagation()
+  // 向上传递自定义事件，让父组件处理选择
+  const target = e.target as HTMLInputElement
+  target.checked = !props.selected  // 切换选中状态
+  // 触发父组件的 toggleSelect 逻辑 - 通过 click 事件传递
+  // 父组件需要区分是复选框点击还是行点击
+  ;(e.currentTarget as HTMLElement).dispatchEvent(new CustomEvent('toggle-select', {
+    bubbles: true,
+    detail: props.torrent.id
+  }))
+}
 
 type TorrentState = UnifiedTorrent['state']
 
@@ -19,6 +37,42 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
   }
   return icons[state]
 }
+
+// 计算健康度百分比
+const getHealthPercentage = (torrent: UnifiedTorrent): number => {
+  const seeds = torrent.numSeeds || 0
+  const peers = torrent.numPeers || 0
+  const total = seeds + peers
+
+  if (total === 0) return 0
+  if (seeds === 0) return Math.min(25, total * 5)  // 无种子时最多25%
+  if (seeds >= 10) return 100  // 10个或以上种子时100%
+
+  // 根据种子数和总连接数计算健康度
+  const seedRatio = seeds / Math.max(total, 1)
+  const seedBonus = Math.min(seeds * 15, 60)  // 每个种子15分，最多60分
+  const baseHealth = seedRatio * 40  // 种子比例最多40分
+
+  return Math.min(100, Math.round(baseHealth + seedBonus))
+}
+
+// 格式化ETA
+const formatETA = (eta: number): string => {
+  if (eta <= 0 || !isFinite(eta)) return '∞'
+
+  const hours = Math.floor(eta / 3600)
+  const minutes = Math.floor((eta % 3600) / 60)
+
+  if (hours === 0) {
+    return `${minutes}分`
+  } else if (hours < 24) {
+    return `${hours}:${minutes.toString().padStart(2, '0')}`
+  } else {
+    const days = Math.floor(hours / 24)
+    const remainingHours = hours % 24
+    return `${days}天${remainingHours}时`
+  }
+}
 </script>
 
 <template>
@@ -26,12 +80,14 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
   <div
     class="torrent-row cursor-pointer group flex items-center"
     :class="{ 'bg-blue-50 border-blue-200': selected }"
+    @click="$emit('click', $event)"
   >
     <!-- 选择器 -->
     <div class="col-checkbox flex items-center justify-center px-3 py-2 shrink-0">
       <input
         type="checkbox"
         :checked="selected"
+        @change="handleCheckboxClick"
         class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/20 focus:ring-offset-0 focus:ring-2 cursor-pointer transition-all duration-150"
       />
     </div>
@@ -53,8 +109,10 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
             <span class="font-mono">{{ formatBytes(torrent.size) }}</span>
             <span class="hidden sm:inline">•</span>
             <span class="hidden sm:inline">比率 {{ torrent.ratio.toFixed(2) }}</span>
-            <span class="md:hidden">•</span>
-            <span class="md:hidden">{{ formatSpeed(torrent.dlspeed) }} ↓</span>
+            <span class="hidden md:inline">•</span>
+            <span class="hidden md:inline">{{ torrent.numSeeds || 0 }}/{{ torrent.numPeers || 0 }} 连接</span>
+            <span class="hidden lg:inline">•</span>
+            <span class="hidden lg:inline">健康度 {{ getHealthPercentage(torrent) }}%</span>
           </div>
         </div>
       </div>
@@ -112,16 +170,7 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
     <!-- ETA (大屏端) -->
     <div class="col-eta px-3 py-2 w-20 text-right shrink-0 hidden lg:flex items-center justify-center">
       <div class="text-sm font-mono text-gray-600">
-        {{ formatDuration(torrent.eta) }}
-      </div>
-    </div>
-
-    <!-- 操作按钮 (移动端隐藏，hover显示) -->
-    <div class="col-actions px-3 py-2 w-16 shrink-0">
-      <div class="flex opacity-0 group-hover:opacity-100 transition-opacity duration-150">
-        <button class="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700 transition-colors duration-150" title="更多操作">
-          <Icon name="more-vertical" :size="16" />
-        </button>
+        {{ torrent.eta ? formatETA(torrent.eta) : '-' }}
       </div>
     </div>
   </div>

@@ -1,4 +1,4 @@
-import type { UnifiedTorrent, Category, ServerState } from './types'
+import type { UnifiedTorrent, Category, ServerState, UnifiedTorrentDetail } from './types'
 
 /**
  * fetchList 返回结果包装
@@ -91,4 +91,74 @@ export interface BaseAdapter {
    * @returns true 表示已认证，false 表示需要登录
    */
   checkSession(): Promise<boolean>
+
+  /**
+   * 获取种子详情（按需加载）
+   * @param hash - 种子 hash/id
+   * @returns 种子详情，包含文件列表、Trackers、Peers 等
+   */
+  fetchDetail(hash: string): Promise<UnifiedTorrentDetail>
+
+  /**
+   * 重新校验种子
+   * @param hash - 种子 hash/id
+   */
+  recheck(hash: string): Promise<void>
+
+  /**
+   * 重新汇报（向 tracker 重新 announce）
+   * @param hash - 种子 hash/id
+   */
+  reannounce(hash: string): Promise<void>
+
+  /**
+   * 强制开始/取消强制开始
+   * @param hash - 种子 hash/id
+   * @param value - true 强制开始，false 取消强制
+   */
+  forceStart(hash: string, value: boolean): Promise<void>
+
+  /**
+   * 设置下载限速
+   * @param hash - 种子 hash/id
+   * @param limit - 限速值（bytes/s），-1 表示无限制
+   */
+  setDownloadLimit(hash: string, limit: number): Promise<void>
+
+  /**
+   * 设置上传限速
+   * @param hash - 种子 hash/id
+   * @param limit - 限速值（bytes/s），-1 表示无限制
+   */
+  setUploadLimit(hash: string, limit: number): Promise<void>
+
+  /**
+   * 设置保存位置
+   * @param hash - 种子 hash/id
+   * @param location - 新的保存路径
+   */
+  setLocation(hash: string, location: string): Promise<void>
+
+  /**
+   * 设置分类
+   * @param hash - 种子 hash/id
+   * @param category - 分类名称，空字符串表示移除分类
+   */
+  setCategory(hash: string, category: string): Promise<void>
+
+  /**
+   * 设置标签
+   * @param hash - 种子 hash/id
+   * @param tags - 标签数组
+   * @param mode - 'set' 替换, 'add' 添加, 'remove' 移除
+   */
+  setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void>
+
+  /**
+   * 设置文件优先级
+   * @param hash - 种子 hash/id
+   * @param fileIds - 文件 id 数组
+   * @param priority - 'high' | 'normal' | 'low' | 'do_not_download'
+   */
+  setFilePriority(hash: string, fileIds: number[], priority: 'high' | 'normal' | 'low' | 'do_not_download'): Promise<void>
 }

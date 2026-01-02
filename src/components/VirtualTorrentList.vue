@@ -10,11 +10,22 @@ interface Props {
 }
 
 interface Emits {
-  (e: 'click', hash: string): void
+  (e: 'click', hash: string, event: Event): void
+  (e: 'toggle-select', hash: string): void
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
+
+// 处理行点击：传递事件对象
+function handleRowClick(hash: string, event: Event) {
+  emit('click', hash, event)
+}
+
+// 处理复选框点击：切换选择
+function handleToggleSelect(hash: string) {
+  emit('toggle-select', hash)
+}
 
 const parentRef = ref<HTMLElement | null>(null)
 
@@ -39,7 +50,8 @@ const virtualizer = useVirtualizer({
         :key="String(virtualRow.key)"
         :torrent="torrents[virtualRow.index]!"
         :selected="selectedHashes.has(torrents[virtualRow.index]!.id)"
-        @click="emit('click', torrents[virtualRow.index]!.id)"
+        @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
+        @toggle-select="handleToggleSelect($event.detail)"
         :style="{
           position: 'absolute',
           top: 0,

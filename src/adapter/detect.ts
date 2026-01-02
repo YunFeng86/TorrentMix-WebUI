@@ -3,6 +3,15 @@ import { getQbitBaseUrl } from '@/api/client'
 
 export type BackendType = 'qbit' | 'trans' | 'unknown'
 
+// 从环境变量读取强制指定的后端类型
+function getForcedBackend(): BackendType | null {
+  const forced = import.meta.env.VITE_BACKEND_TYPE?.toLowerCase()
+  if (forced === 'qbit') return 'qbit'
+  if (forced === 'trans') return 'trans'
+  // auto 或未设置 = 自动检测
+  return null
+}
+
 /**
  * 判断是否应该使用代理（开发环境或同源）
  *
@@ -39,6 +48,9 @@ function shouldUseProxy(): boolean {
 export async function detectBackend(
   timeout: number = 3000
 ): Promise<BackendType> {
+  // 环境变量强制指定，跳过检测
+  const forced = getForcedBackend()
+  if (forced) return forced
   // 与 api/client.ts 保持一致的 baseURL 逻辑
   const useProxy = shouldUseProxy()
   const baseURL = useProxy ? '' : getQbitBaseUrl()
