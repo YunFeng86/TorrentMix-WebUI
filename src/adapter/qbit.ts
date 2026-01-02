@@ -33,27 +33,14 @@ export class QbitAdapter {
     if (data.full_update) {
       const map = new Map<string, UnifiedTorrent>()
       for (const [hash, torrent] of Object.entries(data.torrents || {})) {
-        map.set(hash, this.normalize(torrent as QBTorrent))
+        map.set(hash, this.normalize(hash, torrent))
       }
       this.currentMap = map
     } else {
       // 增量更新：合并到现有 Map
       for (const [hash, torrent] of Object.entries(data.torrents || {})) {
         const existing = this.currentMap.get(hash)
-        if (existing) {
-          // 合并增量数据到现有数据
-          const merged: UnifiedTorrent = {
-            ...existing,
-            // 只更新 torrent 中存在的字段
-            ...(torrent.state !== undefined && { state: STATE_MAP[torrent.state] || 'error' }),
-            ...(torrent.progress !== undefined && { progress: torrent.progress }),
-            ...(torrent.dlspeed !== undefined && { dlspeed: torrent.dlspeed }),
-            ...(torrent.upspeed !== undefined && { upspeed: torrent.upspeed }),
-            ...(torrent.eta !== undefined && { eta: torrent.eta }),
-            ...(torrent.ratio !== undefined && { ratio: torrent.ratio })
-          }
-          this.currentMap.set(hash, merged)
-        }
+        this.currentMap.set(hash, this.normalize(hash, torrent, existing))
       }
 
       // 处理删除的种子
@@ -90,19 +77,19 @@ export class QbitAdapter {
   }
 
   // 归一化：qBittorrent → UnifiedTorrent
-  private normalize(raw: QBTorrent): UnifiedTorrent {
+  private normalize(hash: string, raw: Partial<QBTorrent>, existing?: UnifiedTorrent): UnifiedTorrent {
     return {
-      id: raw.hash,
-      name: raw.name,
-      state: STATE_MAP[raw.state] || 'error',
-      progress: raw.progress,  // qB: 0 = 0%, 1 = 100%
-      size: raw.size,
-      dlspeed: raw.dlspeed,
-      upspeed: raw.upspeed,
-      eta: raw.eta,
-      ratio: raw.ratio,
-      addedTime: raw.added_on,
-      savePath: raw.save_path
+      id: hash, // qB sync/maindata: key is hash; value may omit hash
+      name: raw.name ?? existing?.name ?? '',
+      state: raw.state ? (STATE_MAP[raw.state] || 'error') : (existing?.state ?? 'error'),
+      progress: raw.progress ?? existing?.progress ?? 0,
+      size: raw.size ?? existing?.size ?? 0,
+      dlspeed: raw.dlspeed ?? existing?.dlspeed ?? 0,
+      upspeed: raw.upspeed ?? existing?.upspeed ?? 0,
+      eta: raw.eta ?? existing?.eta ?? -1,
+      ratio: raw.ratio ?? existing?.ratio ?? 0,
+      addedTime: raw.added_on ?? existing?.addedTime ?? 0,
+      savePath: raw.save_path ?? existing?.savePath ?? ''
     }
   }
 }

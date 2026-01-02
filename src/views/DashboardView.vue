@@ -3,9 +3,10 @@ import { onMounted, onUnmounted, ref, computed } from 'vue'
 import { useTorrentStore } from '@/store/torrent'
 import { useAuthStore } from '@/store/auth'
 import { QbitAdapter } from '@/adapter/qbit'
+import type { UnifiedTorrent } from '@/adapter/types'
 import TorrentRow from '@/components/torrent/TorrentRow.vue'
 import TorrentCard from '@/components/torrent/TorrentCard.vue'
-import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
+import { formatSpeed } from '@/utils/format'
 
 const torrentStore = useTorrentStore()
 const authStore = useAuthStore()
@@ -131,14 +132,6 @@ function logout() {
   authStore.logout()
   window.location.href = '/login'
 }
-
-// 传输速度进度条（全局）
-const globalProgress = computed(() => {
-  const total = stats.total
-  if (total === 0) return 0
-  const completed = stats.seeding + stats.paused
-  return (completed / total) * 100
-})
 
 onMounted(() => {
   poll()

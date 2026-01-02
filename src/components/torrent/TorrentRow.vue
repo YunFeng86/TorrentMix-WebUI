@@ -4,9 +4,11 @@ import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
 
 defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
 
+type TorrentState = UnifiedTorrent['state']
+
 // 状态图标组件
-const getStateIcon = (state: string) => {
-  const icons = {
+const getStateIcon = (state: TorrentState) => {
+  const icons: Record<TorrentState, string> = {
     downloading: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4-4m0 0l-4 4m4-4v12',
     seeding: 'M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12',
     paused: 'M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z',
@@ -14,12 +16,12 @@ const getStateIcon = (state: string) => {
     checking: 'M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15',
     error: 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-2.694-.833-3.464 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z'
   }
-  return icons[state] || icons.error
+  return icons[state]
 }
 
 // 状态颜色
-const getStateColor = (state: string) => {
-  const colors = {
+const getStateColor = (state: TorrentState) => {
+  const colors: Record<TorrentState, string> = {
     downloading: 'text-blue-500',
     seeding: 'text-cyan-500',
     paused: 'text-gray-400',
@@ -27,7 +29,7 @@ const getStateColor = (state: string) => {
     checking: 'text-purple-500',
     error: 'text-red-500'
   }
-  return colors[state] || colors.error
+  return colors[state]
 }
 </script>
 

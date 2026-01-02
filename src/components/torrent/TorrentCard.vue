@@ -4,9 +4,11 @@ import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
 
 defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
 
+type TorrentState = UnifiedTorrent['state']
+
 // 状态颜色
-const getStateColor = (state: string) => {
-  const colors = {
+const getStateColor = (state: TorrentState) => {
+  const colors: Record<TorrentState, string> = {
     downloading: 'text-blue-500',
     seeding: 'text-cyan-500',
     paused: 'text-gray-400',
@@ -14,12 +16,12 @@ const getStateColor = (state: string) => {
     checking: 'text-purple-500',
     error: 'text-red-500'
   }
-  return colors[state] || colors.error
+  return colors[state]
 }
 
 // 状态背景色
-const getStateBg = (state: string) => {
-  const colors = {
+const getStateBg = (state: TorrentState) => {
+  const colors: Record<TorrentState, string> = {
     downloading: 'bg-blue-50',
     seeding: 'bg-cyan-50',
     paused: 'bg-gray-100',
@@ -27,12 +29,12 @@ const getStateBg = (state: string) => {
     checking: 'bg-purple-50',
     error: 'bg-red-50'
   }
-  return colors[state] || colors.error
+  return colors[state]
 }
 
 // 状态文字
-const getStateText = (state: string) => {
-  const texts = {
+const getStateText = (state: TorrentState) => {
+  const texts: Record<TorrentState, string> = {
     downloading: '下载中',
     seeding: '做种中',
     paused: '已暂停',
@@ -40,7 +42,7 @@ const getStateText = (state: string) => {
     checking: '检查中',
     error: '错误'
   }
-  return texts[state] || texts.error
+  return texts[state]
 }
 </script>
 
