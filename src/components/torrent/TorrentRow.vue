@@ -22,20 +22,22 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
 </script>
 
 <template>
-  <tr class="table-row cursor-pointer group" :class="{ 'bg-blue-50 border-blue-200': selected }">
+  <!-- div-based table row, compatible with virtual scrolling -->
+  <div
+    class="torrent-row cursor-pointer group flex items-center"
+    :class="{ 'bg-blue-50 border-blue-200': selected }"
+  >
     <!-- 选择器 -->
-    <td class="w-12 px-3 py-2">
-      <div class="flex items-center justify-center">
-        <input
-          type="checkbox"
-          :checked="selected"
-          class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/20 focus:ring-offset-0 focus:ring-2 cursor-pointer transition-all duration-150"
-        />
-      </div>
-    </td>
+    <div class="col-checkbox flex items-center justify-center px-3 py-2 shrink-0">
+      <input
+        type="checkbox"
+        :checked="selected"
+        class="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/20 focus:ring-offset-0 focus:ring-2 cursor-pointer transition-all duration-150"
+      />
+    </div>
 
     <!-- 种子名称与状态 -->
-    <td class="px-3 py-2 min-w-0">
+    <div class="col-torrent px-3 py-2 min-w-0 flex-1">
       <div class="flex items-center gap-3">
         <!-- 状态图标 -->
         <div class="flex-shrink-0">
@@ -56,10 +58,10 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
           </div>
         </div>
       </div>
-    </td>
+    </div>
 
-    <!-- 进度条 (高密度) -->
-    <td class="px-3 py-2 w-32">
+    <!-- 进度条 -->
+    <div class="col-progress px-3 py-2 w-32 shrink-0">
       <div class="space-y-1">
         <div class="flex items-center justify-between">
           <span class="text-xs font-mono text-gray-600">
@@ -81,10 +83,10 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
           />
         </div>
       </div>
-    </td>
+    </div>
 
     <!-- 下载速度 -->
-    <td class="px-3 py-2 w-20 text-right">
+    <div class="col-dl-speed px-3 py-2 w-20 text-right shrink-0">
       <div class="space-y-0.5">
         <div class="text-sm font-mono text-gray-900">
           {{ formatSpeed(torrent.dlspeed) }}
@@ -93,10 +95,10 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
           ↓
         </div>
       </div>
-    </td>
+    </div>
 
     <!-- 上传速度 (PC端) -->
-    <td class="px-3 py-2 w-20 text-right hidden md:table-cell">
+    <div class="col-ul-speed px-3 py-2 w-20 text-right shrink-0 hidden md:flex">
       <div class="space-y-0.5">
         <div class="text-sm font-mono text-gray-900">
           {{ formatSpeed(torrent.upspeed) }}
@@ -105,22 +107,51 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
           ↑
         </div>
       </div>
-    </td>
+    </div>
 
     <!-- ETA (大屏端) -->
-    <td class="px-3 py-2 w-20 text-right hidden lg:table-cell">
+    <div class="col-eta px-3 py-2 w-20 text-right shrink-0 hidden lg:flex items-center justify-center">
       <div class="text-sm font-mono text-gray-600">
         {{ formatDuration(torrent.eta) }}
       </div>
-    </td>
+    </div>
 
     <!-- 操作按钮 (移动端隐藏，hover显示) -->
-    <td class="px-3 py-2 w-16">
+    <div class="col-actions px-3 py-2 w-16 shrink-0">
       <div class="flex opacity-0 group-hover:opacity-100 transition-opacity duration-150">
         <button class="p-1 hover:bg-gray-100 rounded text-gray-500 hover:text-gray-700 transition-colors duration-150" title="更多操作">
           <Icon name="more-vertical" :size="16" />
         </button>
       </div>
-    </td>
-  </tr>
+    </div>
+  </div>
 </template>
+
+<style scoped>
+/* Border between rows */
+.torrent-row {
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.torrent-row:last-child {
+  border-bottom: none;
+}
+
+.torrent-row:hover {
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+/* Progress bar styles */
+.progress-bar {
+  position: relative;
+  height: 4px;
+  background-color: #e5e7eb;
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+}
+</style>

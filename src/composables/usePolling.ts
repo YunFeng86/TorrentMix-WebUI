@@ -1,4 +1,5 @@
 import { ref, onMounted, onUnmounted, type Ref } from 'vue'
+import { isFatalError } from '@/api/client'
 
 /**
  * 轮询状态
@@ -14,6 +15,8 @@ export interface PollingOptions {
   circuitBreakerDelay?: number
   /** 是否在页面隐藏时暂停轮询，默认 true */
   pauseWhenHidden?: boolean
+  /** 遇到致命错误时的回调（如 403），轮询将立即停止 */
+  onFatalError?: (error: Error) => void
   /** 轮询函数 */
   fn: () => Promise<void>
 }
@@ -44,6 +47,7 @@ export interface PollingController {
  * - 熔断器：连续失败 circuitBreakerThreshold 次后暂停 circuitBreakerDelay 毫秒
  * - 页面可见性：页面隐藏时暂停轮询，显示时恢复
  * - 自动恢复：成功时重置所有状态
+ * - 致命错误：遇到 AuthError 等致命错误时立即停止轮询
  *
  * @example
  * ```ts
@@ -66,6 +70,7 @@ export function usePolling(options: PollingOptions): PollingController {
     circuitBreakerThreshold = 5,
     circuitBreakerDelay = 60000,
     pauseWhenHidden = true,
+    onFatalError,
     fn
   } = options
 
@@ -126,7 +131,13 @@ export function usePolling(options: PollingOptions): PollingController {
     try {
       await fn()
       reset()
-    } catch {
+    } catch (error) {
+      // 检查是否为致命错误（如 AuthError）
+      if (onFatalError && isFatalError(error)) {
+        stop()  // 立即停止轮询
+        onFatalError(error as Error)
+        return
+      }
       backoff()
     }
 

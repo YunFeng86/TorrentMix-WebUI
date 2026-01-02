@@ -1,5 +1,22 @@
 import axios from 'axios'
 
+/**
+ * 认证失败错误 - 需要清理状态并跳转登录
+ */
+export class AuthError extends Error {
+  name = 'AuthError'
+  constructor(message = 'Session expired or unauthorized') {
+    super(message)
+  }
+}
+
+/**
+ * 判断是否为致命错误（轮询应立即停止）
+ */
+export function isFatalError(error: unknown): boolean {
+  return error instanceof AuthError
+}
+
 function getConfiguredQbitBaseUrl(): string {
   // 开发环境走 Vite 代理，baseURL 留空
   if (import.meta.env.DEV) return ''
@@ -41,17 +58,25 @@ export const apiClient = axios.create({
 // 内部标记：用于静默验证，不触发登录跳转
 const SILENT_CHECK_FLAG = '__silent_check__'
 
-// 响应拦截器：403 自动跳转登录
+// 响应拦截器：403/401 抛出 AuthError，让调用方决定如何处理
 apiClient.interceptors.response.use(
   response => response,
   error => {
-    // 静默验证请求不触发跳转，让调用方处理
+    // 静默验证请求不触发 AuthError，直接 reject
     if (error.config?.headers?.[SILENT_CHECK_FLAG]) {
       return Promise.reject(error)
     }
+
+    // 403 Forbidden: 会话过期，抛出 AuthError
     if (error.response?.status === 403) {
-      window.location.href = '/login'
+      return Promise.reject(new AuthError('Session expired'))
     }
+
+    // 401 Unauthorized: 也抛出 AuthError（兼容其他后端）
+    if (error.response?.status === 401) {
+      return Promise.reject(new AuthError('Unauthorized'))
+    }
+
     return Promise.reject(error)
   }
 )

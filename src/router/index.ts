@@ -1,10 +1,12 @@
-import { createRouter, createWebHistory } from 'vue-router'
+import { createRouter, createWebHashHistory } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
+import { useBackendStore } from '@/store/backend'
+import { AuthError } from '@/api/client'
 import LoginView from '@/views/LoginView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHashHistory(),
   routes: [
     { path: '/login', component: LoginView },
     {
@@ -14,6 +16,17 @@ const router = createRouter({
     }
   ]
 })
+
+/**
+ * 清理所有认证状态
+ */
+function clearAuthState() {
+  const authStore = useAuthStore()
+  const backendStore = useBackendStore()
+
+  authStore.isAuthenticated = false
+  backendStore.clearAdapter?.()
+}
 
 router.beforeEach(async (to) => {
   const authStore = useAuthStore()
@@ -37,7 +50,7 @@ router.beforeEach(async (to) => {
 
   // 已登录用户访问登录页，重定向到首页
   // 先检查标志位（已登录则直接跳转，避免请求）
-  if (to.path === '/login') {
+  if (to.path === '/login' || to.path === '#/login') {
     if (authStore.isAuthenticated) {
       return '/'
     }
@@ -49,6 +62,14 @@ router.beforeEach(async (to) => {
   }
 
   return true
+})
+
+// 全局错误处理器：捕获组件内抛出的 AuthError
+router.onError((error) => {
+  if (error instanceof AuthError) {
+    clearAuthState()
+    router.replace('/login')
+  }
 })
 
 export default router

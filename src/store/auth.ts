@@ -12,9 +12,17 @@ export const useAuthStore = defineStore('auth', () => {
     params.append('username', username)
     params.append('password', password)
 
-    await apiClient.post('/api/v2/auth/login', params, {
+    const response = await apiClient.post('/api/v2/auth/login', params, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
+
+    // qBittorrent 返回 "Ok." 表示成功，"Fails." 表示失败
+    // 都是 HTTP 200，必须检查响应体
+    if (response.data !== 'Ok.') {
+      throw new Error(response.data === 'Fails.'
+        ? '用户名或密码错误'
+        : `登录失败: ${response.data}`)
+    }
 
     isAuthenticated.value = true
   }

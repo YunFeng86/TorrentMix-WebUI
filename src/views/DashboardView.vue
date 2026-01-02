@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import { useTorrentStore } from '@/store/torrent'
 import { useAuthStore } from '@/store/auth'
 import { useBackendStore } from '@/store/backend'
 import { usePolling } from '@/composables/usePolling'
+import { AuthError } from '@/api/client'
 import type { UnifiedTorrent } from '@/adapter/types'
 import type { AddTorrentParams } from '@/adapter/interface'
 import TorrentRow from '@/components/torrent/TorrentRow.vue'
@@ -17,6 +19,7 @@ import { formatSpeed } from '@/utils/format'
 // 虚拟滚动阈值：超过 500 个种子时启用虚拟滚动
 const VIRTUAL_SCROLL_THRESHOLD = 500
 
+const router = useRouter()
 const torrentStore = useTorrentStore()
 const authStore = useAuthStore()
 const backendStore = useBackendStore()
@@ -134,11 +137,27 @@ const sortedTorrents = computed(() => {
 // 是否使用虚拟滚动（超过阈值时启用）
 const useVirtualScroll = computed(() => sortedTorrents.value.length >= VIRTUAL_SCROLL_THRESHOLD)
 
-// 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听）
+// 立即刷新函数（操作后调用）
+async function immediateRefresh() {
+  try {
+    const data = await adapter.value.fetchList()
+    torrentStore.updateTorrents(data)
+  } catch (error) {
+    console.error('[Dashboard] Refresh failed:', error)
+  }
+}
+
+// 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听 + 致命错误处理）
 const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
   fn: async () => {
     const data = await adapter.value.fetchList()
     torrentStore.updateTorrents(data)
+  },
+  // 遇到 403 立即跳转登录
+  onFatalError: (error) => {
+    if (error instanceof AuthError) {
+      router.replace('/login')
+    }
   },
   baseInterval: 2000,
   maxInterval: 30000,
@@ -179,11 +198,13 @@ function selectAll() {
 async function handlePause() {
   await adapter.value.pause(Array.from(selectedHashes.value))
   selectedHashes.value.clear()
+  await immediateRefresh()
 }
 
 async function handleResume() {
   await adapter.value.resume(Array.from(selectedHashes.value))
   selectedHashes.value.clear()
+  await immediateRefresh()
 }
 
 async function handleDelete() {
@@ -217,11 +238,12 @@ async function handleDelete() {
 
   await adapter.value.delete(Array.from(selectedHashes.value), deleteFiles)
   selectedHashes.value.clear()
+  await immediateRefresh()
 }
 
 async function logout() {
   await authStore.logout()
-  window.location.href = '/login'
+  router.replace('/login')
 }
 
 // 添加种子
@@ -231,10 +253,7 @@ async function handleAddTorrent(params: AddTorrentParams) {
   try {
     await adapter.value.addTorrent(params)
     showAddDialog.value = false
-    // 添加成功后稍等片刻让种子出现在列表中
-    setTimeout(() => {
-      // 轮询会自动刷新列表
-    }, 500)
+    await immediateRefresh()
   } catch (err) {
     console.error('[Dashboard] Failed to add torrent:', err)
     addError.value = err instanceof Error ? err.message : '添加种子失败'
@@ -473,23 +492,20 @@ onUnmounted(() => {
 
         <!-- 种子列表 -->
         <div class="flex-1 overflow-auto">
-          <!-- 桌面端表格视图 -->
+          <!-- 桌面端列表视图 -->
           <div class="hidden md:block h-full">
             <!-- 虚拟滚动（大量种子时） -->
             <div v-if="useVirtualScroll" class="h-full flex flex-col">
-              <table class="w-full">
-                <thead class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0">
-                  <tr class="text-xs text-gray-600 uppercase tracking-wide">
-                    <th class="text-left px-3 py-3 font-medium w-12"></th>
-                    <th class="text-left px-3 py-3 font-medium">种子</th>
-                    <th class="text-left px-3 py-3 font-medium w-32">进度</th>
-                    <th class="text-right px-3 py-3 font-medium w-20">下载</th>
-                    <th class="text-right px-3 py-3 font-medium w-20 hidden md:table-cell">上传</th>
-                    <th class="text-right px-3 py-3 font-medium w-20 hidden lg:table-cell">剩余</th>
-                    <th class="text-right px-3 py-3 font-medium w-16"></th>
-                  </tr>
-                </thead>
-              </table>
+              <!-- 表头 -->
+              <div class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0 flex items-center text-xs text-gray-600 uppercase tracking-wide">
+                <div class="w-12 px-3 py-3"></div>
+                <div class="flex-1 px-3 py-3">种子</div>
+                <div class="w-32 px-3 py-3">进度</div>
+                <div class="w-20 px-3 py-3 text-right">下载</div>
+                <div class="w-20 px-3 py-3 text-right hidden md:flex">上传</div>
+                <div class="w-20 px-3 py-3 text-right hidden lg:flex">剩余</div>
+                <div class="w-16 px-3 py-3"></div>
+              </div>
               <VirtualTorrentList
                 v-if="sortedTorrents.length > 0"
                 :torrents="sortedTorrents"
@@ -507,40 +523,36 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- 普通表格（少量种子时） -->
-            <table v-else class="w-full">
-              <thead class="sticky top-0 bg-gray-100 border-b border-gray-200">
-                <tr class="text-xs text-gray-600 uppercase tracking-wide">
-                  <th class="text-left px-3 py-3 font-medium w-12"></th>
-                  <th class="text-left px-3 py-3 font-medium">种子</th>
-                  <th class="text-left px-3 py-3 font-medium w-32">进度</th>
-                  <th class="text-right px-3 py-3 font-medium w-20">下载</th>
-                  <th class="text-right px-3 py-3 font-medium w-20 hidden md:table-cell">上传</th>
-                  <th class="text-right px-3 py-3 font-medium w-20 hidden lg:table-cell">剩余</th>
-                  <th class="text-right px-3 py-3 font-medium w-16"></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-if="sortedTorrents.length === 0">
-                  <td colspan="7" class="px-4 py-16 text-center">
-                    <div class="flex flex-col items-center gap-4">
-                      <Icon name="inbox" :size="48" class="text-gray-300" />
-                      <div class="text-gray-500">
-                        <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
-                        <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
-                      </div>
-                    </div>
-                  </td>
-                </tr>
-                <TorrentRow
-                  v-for="torrent in sortedTorrents"
-                  :key="torrent.id"
-                  :torrent="torrent"
-                  :selected="selectedHashes.has(torrent.id)"
-                  @click="toggleSelect(torrent.id)"
-                />
-              </tbody>
-            </table>
+            <!-- 普通列表（少量种子时） -->
+            <div v-else class="h-full flex flex-col">
+              <!-- 表头 -->
+              <div class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0 flex items-center text-xs text-gray-600 uppercase tracking-wide">
+                <div class="w-12 px-3 py-3"></div>
+                <div class="flex-1 px-3 py-3">种子</div>
+                <div class="w-32 px-3 py-3">进度</div>
+                <div class="w-20 px-3 py-3 text-right">下载</div>
+                <div class="w-20 px-3 py-3 text-right hidden md:flex">上传</div>
+                <div class="w-20 px-3 py-3 text-right hidden lg:flex">剩余</div>
+                <div class="w-16 px-3 py-3"></div>
+              </div>
+              <!-- 列表内容 -->
+              <div v-if="sortedTorrents.length === 0" class="px-4 py-16 text-center">
+                <div class="flex flex-col items-center gap-4">
+                  <Icon name="inbox" :size="48" class="text-gray-300" />
+                  <div class="text-gray-500">
+                    <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
+                    <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
+                  </div>
+                </div>
+              </div>
+              <TorrentRow
+                v-for="torrent in sortedTorrents"
+                :key="torrent.id"
+                :torrent="torrent"
+                :selected="selectedHashes.has(torrent.id)"
+                @click="toggleSelect(torrent.id)"
+              />
+            </div>
           </div>
 
           <!-- 移动端卡片视图 -->
