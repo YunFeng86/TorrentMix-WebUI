@@ -741,27 +741,6 @@ onUnmounted(() => {
             </div>
           </div>
         </nav>
-
-        <!-- 底部统计 (移动隐藏) -->
-        <div :class="`p-4 border-t border-gray-200 hidden lg:block ${sidebarCollapsed ? 'hidden' : ''}`">
-          <div class="text-xs text-gray-500 space-y-1">
-            <div class="flex justify-between">
-              <span>活跃连接</span>
-              <span class="font-mono">{{ stats.downloading + stats.seeding }}</span>
-            </div>
-            <div class="flex justify-between">
-              <span>总共</span>
-              <span class="font-mono">{{ stats.total }}</span>
-            </div>
-            <div v-if="backendStore.versionDisplay" class="flex justify-between pt-2 mt-2 border-t border-gray-200">
-              <span class="text-gray-400">{{ backendStore.versionDisplay }}</span>
-            </div>
-            <div v-else class="flex items-center gap-1 pt-2 mt-2 border-t border-gray-200 text-amber-600">
-              <Icon name="alert-triangle" :size="12" />
-              <span>版本检测失败</span>
-            </div>
-          </div>
-        </div>
       </aside>
 
       <!-- 右侧主内容 -->
@@ -973,8 +952,16 @@ onUnmounted(() => {
 
         <!-- 底部状态栏 -->
         <div class="border-t border-gray-200 px-4 py-2 text-xs text-gray-500 flex items-center justify-between shrink-0 bg-gray-50">
-          <!-- 左侧：统计信息 -->
+          <!-- 左侧：版本号 + 统计信息 -->
           <div class="flex items-center gap-4">
+            <!-- 版本号 -->
+            <span v-if="backendStore.versionDisplay" class="text-gray-400">{{ backendStore.versionDisplay }}</span>
+            <div v-else class="flex items-center gap-1 text-amber-600">
+              <Icon name="alert-triangle" :size="12" />
+              <span>版本检测失败</span>
+            </div>
+            <div class="w-px h-3 bg-gray-300"></div>
+            <!-- 统计 -->
             <div class="flex items-center gap-2">
               <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
               <span class="font-medium text-gray-700">{{ stats.downloading }}</span>
