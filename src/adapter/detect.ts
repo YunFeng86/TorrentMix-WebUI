@@ -108,7 +108,7 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
  * 探测后端类型并获取版本信息（已认证版本）
  * 此函数会携带凭证，用于登录后获取真实版本号
  */
-export async function detectBackendWithVersionAuth(timeout = 3000): Promise<BackendVersion> {
+export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<BackendVersion> {
   // 使用 silentApiClient 来携带已登录的 cookie，但不会在 403 时抛出 AuthError
   const { silentApiClient } = await import('@/api/client')
 

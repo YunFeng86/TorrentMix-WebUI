@@ -175,8 +175,9 @@ const handleResize = () => {
   }
 }
 
-// 过滤器
-const stateFilter = ref<'all' | 'downloading' | 'seeding' | 'paused' | 'checking' | 'queued' | 'error'>('all')
+// 过滤器（支持暂停的二级分类）
+type StateFilter = 'all' | 'downloading' | 'seeding' | 'paused' | 'paused-completed' | 'paused-incomplete' | 'checking' | 'queued' | 'error'
+const stateFilter = ref<StateFilter>('all')
 const categoryFilter = ref<string>('all')
 const tagFilter = ref<string>('all')
 
@@ -190,6 +191,8 @@ const stats = computed(() => {
     downloading: 0,
     seeding: 0,
     paused: 0,
+    pausedCompleted: 0,
+    pausedIncomplete: 0,
     checking: 0,
     queued: 0,
     error: 0,
@@ -201,7 +204,12 @@ const stats = computed(() => {
     // 状态计数
     if (t.state === 'downloading') result.downloading++
     else if (t.state === 'seeding') result.seeding++
-    else if (t.state === 'paused') result.paused++
+    else if (t.state === 'paused') {
+      result.paused++
+      // 二级分类：已完成 vs 未完成
+      if (t.progress >= 1.0) result.pausedCompleted++
+      else result.pausedIncomplete++
+    }
     else if (t.state === 'checking') result.checking++
     else if (t.state === 'queued') result.queued++
     else if (t.state === 'error') result.error++
@@ -218,11 +226,19 @@ const stats = computed(() => {
 const filteredTorrents = computed(() => {
   let result = torrentStore.torrents
 
-  // 状态过滤
+  // 状态过滤（支持暂停的二级分类）
   if (stateFilter.value !== 'all') {
     const filtered = new Map<string, UnifiedTorrent>()
     for (const [hash, torrent] of result) {
+      // 一级状态匹配
       if (torrent.state === stateFilter.value) {
+        filtered.set(hash, torrent)
+      }
+      // 暂停的二级分类
+      else if (stateFilter.value === 'paused-completed' && torrent.state === 'paused' && torrent.progress >= 1.0) {
+        filtered.set(hash, torrent)
+      }
+      else if (stateFilter.value === 'paused-incomplete' && torrent.state === 'paused' && torrent.progress < 1.0) {
         filtered.set(hash, torrent)
       }
     }
@@ -628,12 +644,32 @@ onUnmounted(() => {
               <span v-if="stats.seeding > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'seeding' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.seeding }}</span>
             </button>
 
-            <button @click="stateFilter = 'paused'"
-                    :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'paused' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
-              <Icon name="pause-circle" color="gray" :size="16" />
-              <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">已暂停</span>
-              <span v-if="stats.paused > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'paused' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.paused }}</span>
-            </button>
+            <!-- 已暂停（固定展开二级分类） -->
+            <div>
+              <button @click="stateFilter = 'paused'"
+                      :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'paused' || stateFilter.startsWith('paused-') ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
+                <Icon name="pause-circle" color="gray" :size="16" />
+                <span :class="`truncate text-sm ${sidebarCollapsed ? 'hidden' : ''}`">已暂停</span>
+                <span v-if="stats.paused > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${sidebarCollapsed ? 'hidden' : ''} ${stateFilter === 'paused' || stateFilter.startsWith('paused-') ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.paused }}</span>
+              </button>
+
+              <!-- 二级分类：固定展开 -->
+              <div v-if="!sidebarCollapsed" class="ml-6 mt-1 space-y-1">
+                <button @click.stop="stateFilter = 'paused-completed'"
+                        :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'paused-completed' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'}`">
+                  <Icon name="check-circle" color="green" :size="14" />
+                  <span class="truncate text-sm">已完成</span>
+                  <span v-if="stats.pausedCompleted > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${stateFilter === 'paused-completed' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.pausedCompleted }}</span>
+                </button>
+
+                <button @click.stop="stateFilter = 'paused-incomplete'"
+                        :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'paused-incomplete' ? 'bg-gray-800 text-white' : 'text-gray-600 hover:bg-gray-100'}`">
+                  <Icon name="download-cloud" color="orange" :size="14" />
+                  <span class="truncate text-sm">未完成</span>
+                  <span v-if="stats.pausedIncomplete > 0" :class="`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${stateFilter === 'paused-incomplete' ? 'bg-white/20 text-white' : 'bg-gray-200 text-gray-600'}`">{{ stats.pausedIncomplete }}</span>
+                </button>
+              </div>
+            </div>
 
             <button @click="stateFilter = 'checking'"
                     :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${stateFilter === 'checking' ? 'bg-black text-white' : 'text-gray-700 hover:bg-gray-100'}`">
