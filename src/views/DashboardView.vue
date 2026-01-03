@@ -18,6 +18,8 @@ import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
 import TorrentBottomPanel from '@/components/TorrentBottomPanel.vue'
 import ResizableTableHeader from '@/components/table/ResizableTableHeader.vue'
 import ColumnVisibilityMenu from '@/components/table/ColumnVisibilityMenu.vue'
+import CategoryManageDialog from '@/components/CategoryManageDialog.vue'
+import TagManageDialog from '@/components/TagManageDialog.vue'
 import Icon from '@/components/Icon.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
 
@@ -65,6 +67,10 @@ watch(searchQuery, (val) => updateSearch(val))
 const showAddDialog = ref(false)
 const addLoading = ref(false)
 const addError = ref('')
+
+// 分类/标签管理对话框
+const showCategoryManage = ref(false)
+const showTagManage = ref(false)
 
 // 底部详情面板
 const showDetailPanel = ref(false)
@@ -195,11 +201,15 @@ const stateFilter = ref<StateFilter>('all')
 const categoryFilter = ref<string>('all')
 const tagFilter = ref<string>('all')
 
-// 统计数据 - 一次遍历完成所有统计（Good Taste：消除不必要的多次遍历）
+// 统计数据 - 优先使用 ServerState 的全局速度（后端不支持时回退到求和）
 const stats = computed(() => {
   const torrents = Array.from(torrentStore.torrents.values())
+  const ss = backendStore.serverState
+  const serverDlSpeed = ss?.dlInfoSpeed
+  const serverUpSpeed = ss?.upInfoSpeed
+  const hasServerSpeed = typeof serverDlSpeed === 'number' && typeof serverUpSpeed === 'number'
 
-  // 单次遍历完成所有统计
+  // 单次遍历完成状态计数（无法避免）
   const result = {
     total: torrents.length,
     downloading: 0,
@@ -210,8 +220,8 @@ const stats = computed(() => {
     checking: 0,
     queued: 0,
     error: 0,
-    dlSpeed: 0,
-    upSpeed: 0
+    dlSpeed: hasServerSpeed ? serverDlSpeed : 0,
+    upSpeed: hasServerSpeed ? serverUpSpeed : 0
   }
 
   for (const t of torrents) {
@@ -228,9 +238,10 @@ const stats = computed(() => {
     else if (t.state === 'queued') result.queued++
     else if (t.state === 'error') result.error++
 
-    // 速度累加
-    result.dlSpeed += t.dlspeed
-    result.upSpeed += t.upspeed
+    if (!hasServerSpeed) {
+      result.dlSpeed += t.dlspeed
+      result.upSpeed += t.upspeed
+    }
   }
 
   return result
@@ -531,6 +542,9 @@ async function handleTorrentAction(action: string, hash: string) {
       case 'recheck':
         await adapter.value.recheck(hash)
         break
+      case 'reannounce':
+        await adapter.value.reannounce(hash)
+        break
       case 'forceStart':
         await adapter.value.forceStart(hash, true)
         break
@@ -560,9 +574,8 @@ async function handleRecheckSelected() {
   if (selectedHashes.value.size === 0) return
   const hashes = Array.from(selectedHashes.value)
   try {
-    for (const hash of hashes) {
-      await adapter.value.recheck(hash)
-    }
+    await adapter.value.recheckBatch(hashes)
+    selectedHashes.value.clear()
     await immediateRefresh()
   } catch (err) {
     console.error('[Dashboard] Recheck failed:', err)
@@ -575,13 +588,62 @@ async function handleForceStartSelected() {
   if (selectedHashes.value.size === 0) return
   const hashes = Array.from(selectedHashes.value)
   try {
-    for (const hash of hashes) {
-      await adapter.value.forceStart(hash, true)
-    }
+    await adapter.value.forceStartBatch(hashes, true)
+    selectedHashes.value.clear()
     await immediateRefresh()
   } catch (err) {
     console.error('[Dashboard] Force start failed:', err)
     alert(err instanceof Error ? err.message : '强制开始失败')
+  }
+}
+
+// 批量操作：重新汇报选中项
+async function handleReannounceSelected() {
+  if (selectedHashes.value.size === 0) return
+  const hashes = Array.from(selectedHashes.value)
+  try {
+    await adapter.value.reannounceBatch(hashes)
+    selectedHashes.value.clear()
+    await immediateRefresh()
+  } catch (err) {
+    console.error('[Dashboard] Reannounce failed:', err)
+    alert(err instanceof Error ? err.message : '重新汇报失败')
+  }
+}
+
+// 批量操作：限速
+async function handleBatchSpeedLimit() {
+  if (selectedHashes.value.size === 0) return
+
+  const dlLimitInput = prompt('下载限制 (KB/s, 留空或 0 表示不限制):')
+  if (dlLimitInput === null) return
+
+  const upLimitInput = prompt('上传限制 (KB/s, 留空或 0 表示不限制):')
+  if (upLimitInput === null) return
+
+  const hashes = Array.from(selectedHashes.value)
+  try {
+    const parseKbLimit = (raw: string) => {
+      const text = raw.trim()
+      if (text === '' || text === '0') return 0
+      const kb = Number.parseInt(text, 10)
+      if (!Number.isFinite(kb) || kb < 0) {
+        throw new Error('限速请输入非负整数（KB/s）')
+      }
+      return kb * 1024
+    }
+
+    const dlLimit = parseKbLimit(dlLimitInput)
+    const upLimit = parseKbLimit(upLimitInput)
+
+    await adapter.value.setDownloadLimitBatch(hashes, dlLimit)
+    await adapter.value.setUploadLimitBatch(hashes, upLimit)
+
+    selectedHashes.value.clear()
+    await immediateRefresh()
+  } catch (err) {
+    console.error('[Dashboard] Set speed limit failed:', err)
+    alert(err instanceof Error ? err.message : '设置限速失败')
   }
 }
 
@@ -788,7 +850,28 @@ onUnmounted(() => {
                     title="强制开始">
               <Icon name="zap" :size="16" />
             </button>
+            <button @click="handleReannounceSelected"
+                    :disabled="selectedHashes.size === 0"
+                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
+                    title="重新汇报">
+              <Icon name="radio" :size="16" />
+            </button>
+            <button @click="handleBatchSpeedLimit"
+                    :disabled="selectedHashes.size === 0"
+                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
+                    title="批量限速">
+              <Icon name="sliders" :size="16" />
+            </button>
           </div>
+
+          <!-- 分类/标签管理 -->
+          <div class="w-px h-8 bg-gray-200 mx-2"></div>
+          <button @click="showCategoryManage = true" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150" title="分类管理">
+            <Icon name="folder" :size="16" />
+          </button>
+          <button @click="showTagManage = true" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150" title="标签管理">
+            <Icon name="tag" :size="16" />
+          </button>
 
           <!-- 列设置 -->
           <div class="w-px h-8 bg-gray-200 mx-2"></div>
@@ -1015,6 +1098,18 @@ onUnmounted(() => {
       :open="showAddDialog"
       @close="showAddDialog = false"
       @add="handleAddTorrent"
+    />
+
+    <!-- 分类管理对话框 -->
+    <CategoryManageDialog
+      v-if="showCategoryManage"
+      @close="showCategoryManage = false; immediateRefresh()"
+    />
+
+    <!-- 标签管理对话框 -->
+    <TagManageDialog
+      v-if="showTagManage"
+      @close="showTagManage = false; immediateRefresh()"
     />
   </div>
 </template>

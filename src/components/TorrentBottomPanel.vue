@@ -147,7 +147,7 @@ function handleAction(action: string) {
 function getHealthStatus(torrent: UnifiedTorrent) {
   const seeds = torrent.numSeeds || 0
   const peers = torrent.numPeers || 0
-  
+
   if (seeds >= 10) return { text: '优秀', color: 'text-green-600', bg: 'bg-green-100' }
   if (seeds >= 5) return { text: '良好', color: 'text-blue-600', bg: 'bg-blue-100' }
   if (seeds >= 1) return { text: '一般', color: 'text-yellow-600', bg: 'bg-yellow-100' }
@@ -316,10 +316,10 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
       <div class="flex items-center gap-4 flex-1 min-w-0">
         <!-- 种子基本信息 -->
         <div class="flex items-center gap-3 flex-1 min-w-0">
-          <Icon 
-            :name="torrent?.state === 'downloading' ? 'download' : 'upload-cloud'" 
-            :color="torrent?.state === 'downloading' ? 'blue' : 'cyan'" 
-            :size="20" 
+          <Icon
+            :name="torrent?.state === 'downloading' ? 'download' : 'upload-cloud'"
+            :color="torrent?.state === 'downloading' ? 'blue' : 'cyan'"
+            :size="20"
           />
           <div class="min-w-0 flex-1">
             <h3 class="font-semibold text-gray-900 truncate">{{ torrent?.name || '选择一个种子查看详情' }}</h3>
@@ -327,7 +327,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               <span>{{ formatBytes(torrent.size) }}</span>
               <span>进度 {{ (torrent.progress * 100).toFixed(1) }}%</span>
               <span>比率 {{ torrent.ratio.toFixed(2) }}</span>
-              <div 
+              <div
                 class="inline-flex items-center px-2 py-1 rounded text-xs font-medium"
                 :class="getHealthStatus(torrent)"
               >
@@ -363,18 +363,50 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
 
       <!-- 操作按钮 -->
       <div class="flex items-center gap-2 ml-4">
+        <!-- 暂停/恢复 -->
         <button
           v-if="torrent"
           @click="handleAction(torrent.state === 'paused' ? 'resume' : 'pause')"
-          class="btn p-2 hover:bg-gray-100"
+          class="p-2 hover:bg-gray-100 rounded"
           :title="torrent.state === 'paused' ? '开始' : '暂停'"
         >
           <Icon :name="torrent.state === 'paused' ? 'play' : 'pause'" :size="16" />
         </button>
 
+        <!-- 重新汇报 (Reannounce) -->
+        <button
+          v-if="torrent"
+          @click="handleAction('reannounce')"
+          class="p-2 hover:bg-gray-100 rounded"
+          title="重新汇报"
+        >
+          <Icon name="radio" :size="16" />
+        </button>
+
+        <!-- 重新校验 -->
+        <button
+          v-if="torrent"
+          @click="handleAction('recheck')"
+          class="p-2 hover:bg-gray-100 rounded"
+          title="重新校验"
+        >
+          <Icon name="refresh-cw" :size="16" />
+        </button>
+
+        <!-- 强制开始 -->
+        <button
+          v-if="torrent && torrent.state !== 'paused'"
+          @click="handleAction('forceStart')"
+          class="p-2 hover:bg-amber-50 text-amber-600 rounded"
+          title="强制开始"
+        >
+          <Icon name="zap" :size="16" />
+        </button>
+
+        <!-- 关闭 -->
         <button
           @click="emit('close')"
-          class="btn p-2 hover:bg-gray-100"
+          class="p-2 hover:bg-gray-100 rounded"
           title="关闭详情面板"
         >
           <Icon name="x" :size="16" />
@@ -461,7 +493,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                 </div>
                 <div class="flex justify-between">
                   <span class="text-gray-600">健康状态</span>
-                  <span 
+                  <span
                     class="inline-flex items-center px-2 py-1 rounded text-xs font-medium"
                     :class="getHealthStatus(torrent)"
                   >

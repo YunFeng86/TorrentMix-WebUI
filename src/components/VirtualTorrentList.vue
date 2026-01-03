@@ -16,6 +16,7 @@ interface Props {
 interface Emits {
   (e: 'click', hash: string, event: Event): void
   (e: 'toggle-select', hash: string): void
+  (e: 'action', action: string, hash: string): void
 }
 
 const props = defineProps<Props>()
@@ -58,6 +59,7 @@ const virtualizer = useVirtualizer({
         :is-resizing="isResizing"
         @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
         @toggle-select="handleToggleSelect"
+        @action="(action, hash) => emit('action', action, hash)"
         :style="{
           position: 'absolute',
           top: 0,
@@ -81,6 +83,7 @@ const virtualizer = useVirtualizer({
       :is-resizing="isResizing"
       @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
       @toggle-select="handleToggleSelect"
+      @action="(action, hash) => emit('action', action, hash)"
       :style="{
         position: 'absolute',
         top: 0,

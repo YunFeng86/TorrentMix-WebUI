@@ -1,6 +1,6 @@
 import { transClient } from '@/api/trans-client'
 import type { BaseAdapter, AddTorrentParams, FetchListResult } from '../interface'
-import type { UnifiedTorrent, TorrentState, UnifiedTorrentDetail, TorrentFile, Tracker, Peer } from '../types'
+import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 
 /**
  * Transmission RPC 请求体
@@ -233,7 +233,7 @@ export class TransAdapter implements BaseAdapter {
         ids: id,
         fields: [
           'hashString', 'name', 'totalSize', 'downloadedEver', 'uploadedEver',
-          'downloadLimit', 'uploadLimit', 'secondsSeeding', 'addedDate', 'doneDate',
+          'downloadLimit', 'downloadLimited', 'uploadLimit', 'uploadLimited', 'secondsSeeding', 'addedDate', 'doneDate',
           'downloadDir', 'priority', 'labels',
           'speedLimitDown', 'speedLimitUp',
           'peersConnected', 'peersGettingFromUs', 'peersSendingToUs',
@@ -277,14 +277,17 @@ export class TransAdapter implements BaseAdapter {
       uploaded: 0
     }))
 
+    const dlLimit = torrent.downloadLimited ? (torrent.downloadLimit || 0) * 1024 : -1
+    const upLimit = torrent.uploadLimited ? (torrent.uploadLimit || 0) * 1024 : -1
+
     return {
       hash: torrent.hashString,
       name: torrent.name,
       size: torrent.totalSize,
       completed: torrent.downloadedEver || 0,
       uploaded: torrent.uploadedEver || 0,
-      dlLimit: torrent.downloadLimit || -1,
-      upLimit: torrent.uploadLimit || -1,
+      dlLimit,
+      upLimit,
       seedingTime: torrent.secondsSeeding || 0,
       addedTime: torrent.addedDate,
       completionOn: torrent.doneDate || 0,
@@ -304,47 +307,77 @@ export class TransAdapter implements BaseAdapter {
 
   // 重新校验
   async recheck(hash: string): Promise<void> {
-    const id = parseInt(hash, 10)
+    await this.recheckBatch([hash])
+  }
+
+  async recheckBatch(hashes: string[]): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
     await transClient.post('', {
       method: 'torrent-verify',
-      arguments: { ids: id }
+      arguments: { ids }
     })
   }
 
-  // 重新汇报（Transmission 不支持，空操作）
-  async reannounce(): Promise<void> {
-    // Transmission 没有等效的 reannounce API，保持空实现
+  // 重新汇报（Transmission: torrent-reannounce）
+  async reannounce(hash: string): Promise<void> {
+    await this.reannounceBatch([hash])
   }
 
-  // 强制开始（使用 torrent-start-now）
-  async forceStart(hash: string): Promise<void> {
-    const id = parseInt(hash, 10)
+  async reannounceBatch(hashes: string[]): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
     await transClient.post('', {
-      method: 'torrent-start-now',
-      arguments: { ids: id }
+      method: 'torrent-reannounce',
+      arguments: { ids }
+    })
+  }
+
+  // 强制开始/取消强制开始（Transmission 无等价开关：true 用 start-now，false 用普通 start）
+  async forceStart(hash: string, value: boolean): Promise<void> {
+    await this.forceStartBatch([hash], value)
+  }
+
+  async forceStartBatch(hashes: string[], value: boolean): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
+    await transClient.post('', {
+      method: value ? 'torrent-start-now' : 'torrent-start',
+      arguments: { ids }
     })
   }
 
   // 设置下载限速
   async setDownloadLimit(hash: string, limit: number): Promise<void> {
-    const id = parseInt(hash, 10)
+    await this.setDownloadLimitBatch([hash], limit)
+  }
+
+  async setDownloadLimitBatch(hashes: string[], limit: number): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
+    const limited = limit > 0
+    const kbLimit = limited ? Math.max(1, Math.round(limit / 1024)) : 0
     await transClient.post('', {
       method: 'torrent-set',
       arguments: {
-        ids: id,
-        downloadLimit: limit < 0 ? -1 : limit  // -1 表示无限制
+        ids,
+        downloadLimited: limited,
+        downloadLimit: kbLimit
       }
     })
   }
 
   // 设置上传限速
   async setUploadLimit(hash: string, limit: number): Promise<void> {
-    const id = parseInt(hash, 10)
+    await this.setUploadLimitBatch([hash], limit)
+  }
+
+  async setUploadLimitBatch(hashes: string[], limit: number): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
+    const limited = limit > 0
+    const kbLimit = limited ? Math.max(1, Math.round(limit / 1024)) : 0
     await transClient.post('', {
       method: 'torrent-set',
       arguments: {
-        ids: id,
-        uploadLimit: limit < 0 ? -1 : limit  // -1 表示无限制
+        ids,
+        uploadLimited: limited,
+        uploadLimit: kbLimit
       }
     })
   }
@@ -363,13 +396,17 @@ export class TransAdapter implements BaseAdapter {
 
   // 设置分类（Transmission 用 labels 替代）
   async setCategory(hash: string, category: string): Promise<void> {
-    const id = parseInt(hash, 10)
-    // Transmission 使用 labels，先清除现有 labels，再设置新的
+    await this.setCategoryBatch([hash], category)
+  }
+
+  async setCategoryBatch(hashes: string[], category: string): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
+    // Transmission 使用 labels
     if (category) {
       await transClient.post('', {
         method: 'torrent-set',
         arguments: {
-          ids: id,
+          ids,
           labels: [category]
         }
       })
@@ -378,7 +415,7 @@ export class TransAdapter implements BaseAdapter {
       await transClient.post('', {
         method: 'torrent-set',
         arguments: {
-          ids: id,
+          ids,
           labels: []
         }
       })
@@ -387,7 +424,11 @@ export class TransAdapter implements BaseAdapter {
 
   // 设置标签（Transmission 用 labels 替代）
   async setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
-    const id = parseInt(hash, 10)
+    await this.setTagsBatch([hash], tags, mode)
+  }
+
+  async setTagsBatch(hashes: string[], tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
+    const ids = hashes.map(h => parseInt(h, 10))
 
     // Transmission 的 labels 操作比较简单，这里只实现 set 模式
     // add/remove 模式需要先获取现有 labels 再修改，暂不实现
@@ -395,7 +436,7 @@ export class TransAdapter implements BaseAdapter {
       await transClient.post('', {
         method: 'torrent-set',
         arguments: {
-          ids: id,
+          ids,
           labels: tags
         }
       })
@@ -432,5 +473,47 @@ export class TransAdapter implements BaseAdapter {
         [priorityField]: fileIds
       }
     })
+  }
+
+  // ========== 分类管理 ==========
+
+  async getCategories(): Promise<Map<string, Category>> {
+    return new Map()
+  }
+
+  async createCategory(_name: string, _savePath?: string): Promise<void> {
+    // Transmission 不支持创建 labels，抛出错误
+    throw new Error('Transmission 不支持创建分类（labels）')
+  }
+
+  async editCategory(_name: string, _newName?: string, _savePath?: string): Promise<void> {
+    // Transmission 不支持编辑 labels，抛出错误
+    throw new Error('Transmission 不支持编辑分类（labels）')
+  }
+
+  async deleteCategories(..._names: string[]): Promise<void> {
+    // Transmission 不支持删除 labels，抛出错误
+    throw new Error('Transmission 不支持删除分类（labels）')
+  }
+
+  async setCategorySavePath(_category: string, _savePath: string): Promise<void> {
+    // Transmission 不支持设置分类路径，抛出错误
+    throw new Error('Transmission 不支持设置分类保存路径')
+  }
+
+  // ========== 标签管理 ==========
+
+  async getTags(): Promise<string[]> {
+    return []
+  }
+
+  async createTags(..._tags: string[]): Promise<void> {
+    // Transmission 不支持创建 labels，抛出错误
+    throw new Error('Transmission 不支持创建标签（labels）')
+  }
+
+  async deleteTags(..._tags: string[]): Promise<void> {
+    // Transmission 不支持删除 labels，抛出错误
+    throw new Error('Transmission 不支持删除标签（labels）')
   }
 }

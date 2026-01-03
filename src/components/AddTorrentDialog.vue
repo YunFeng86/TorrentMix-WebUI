@@ -24,6 +24,7 @@ const urlText = ref('')
 const selectedFiles = ref<File[]>([])
 const savePath = ref('')
 const paused = ref(false)
+const skipChecking = ref(false)
 const category = ref('')
 const tags = ref<string[]>([])
 const tagInput = ref('')
@@ -73,6 +74,7 @@ function reset() {
   selectedFiles.value = []
   savePath.value = ''
   paused.value = false
+  skipChecking.value = false
   category.value = ''
   tags.value = []
   tagInput.value = ''
@@ -103,6 +105,9 @@ async function handleSubmit() {
   }
   if (paused.value) {
     params.paused = true
+  }
+  if (skipChecking.value) {
+    params.skip_checking = true
   }
   if (category.value.trim()) {
     params.category = category.value.trim()
@@ -308,6 +313,15 @@ async function handleSubmit() {
                     class="w-4 h-4 rounded border-gray-300 text-black focus:ring-black"
                   />
                   <span class="text-sm text-gray-700">添加后暂停</span>
+                </label>
+
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <input
+                    v-model="skipChecking"
+                    type="checkbox"
+                    class="w-4 h-4 rounded border-gray-300 text-black focus:ring-black"
+                  />
+                  <span class="text-sm text-gray-700">跳过校验</span>
                 </label>
               </div>
             </div>

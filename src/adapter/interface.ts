@@ -30,7 +30,7 @@ export interface AddTorrentParams {
   tags?: string[]
   /** 添加后暂停（默认 false）*/
   paused?: boolean
-  /** 种子哈希（用于跳过重复检测，可选）*/
+  /** 跳过校验（可选）*/
   skip_checking?: boolean
 }
 
@@ -106,10 +106,22 @@ export interface BaseAdapter {
   recheck(hash: string): Promise<void>
 
   /**
+   * 批量重新校验种子
+   * @param hashes - 种子 hash/id 数组
+   */
+  recheckBatch(hashes: string[]): Promise<void>
+
+  /**
    * 重新汇报（向 tracker 重新 announce）
    * @param hash - 种子 hash/id
    */
   reannounce(hash: string): Promise<void>
+
+  /**
+   * 批量重新汇报
+   * @param hashes - 种子 hash/id 数组
+   */
+  reannounceBatch(hashes: string[]): Promise<void>
 
   /**
    * 强制开始/取消强制开始
@@ -119,6 +131,13 @@ export interface BaseAdapter {
   forceStart(hash: string, value: boolean): Promise<void>
 
   /**
+   * 批量强制开始/取消强制开始
+   * @param hashes - 种子 hash/id 数组
+   * @param value - true 强制开始，false 取消强制
+   */
+  forceStartBatch(hashes: string[], value: boolean): Promise<void>
+
+  /**
    * 设置下载限速
    * @param hash - 种子 hash/id
    * @param limit - 限速值（bytes/s），-1 表示无限制
@@ -126,11 +145,25 @@ export interface BaseAdapter {
   setDownloadLimit(hash: string, limit: number): Promise<void>
 
   /**
+   * 批量设置下载限速
+   * @param hashes - 种子 hash/id 数组
+   * @param limit - 限速值（bytes/s），0 表示无限制
+   */
+  setDownloadLimitBatch(hashes: string[], limit: number): Promise<void>
+
+  /**
    * 设置上传限速
    * @param hash - 种子 hash/id
    * @param limit - 限速值（bytes/s），-1 表示无限制
    */
   setUploadLimit(hash: string, limit: number): Promise<void>
+
+  /**
+   * 批量设置上传限速
+   * @param hashes - 种子 hash/id 数组
+   * @param limit - 限速值（bytes/s），0 表示无限制
+   */
+  setUploadLimitBatch(hashes: string[], limit: number): Promise<void>
 
   /**
    * 设置保存位置
@@ -147,6 +180,13 @@ export interface BaseAdapter {
   setCategory(hash: string, category: string): Promise<void>
 
   /**
+   * 批量设置分类
+   * @param hashes - 种子 hash/id 数组
+   * @param category - 分类名称，空字符串表示移除分类
+   */
+  setCategoryBatch(hashes: string[], category: string): Promise<void>
+
+  /**
    * 设置标签
    * @param hash - 种子 hash/id
    * @param tags - 标签数组
@@ -155,10 +195,74 @@ export interface BaseAdapter {
   setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void>
 
   /**
+   * 批量设置标签
+   * @param hashes - 种子 hash/id 数组
+   * @param tags - 标签数组
+   * @param mode - 'set' 替换, 'add' 添加, 'remove' 移除
+   */
+  setTagsBatch(hashes: string[], tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void>
+
+  /**
    * 设置文件优先级
    * @param hash - 种子 hash/id
    * @param fileIds - 文件 id 数组
    * @param priority - 'high' | 'normal' | 'low' | 'do_not_download'
    */
   setFilePriority(hash: string, fileIds: number[], priority: 'high' | 'normal' | 'low' | 'do_not_download'): Promise<void>
+
+  // ========== 分类管理 ==========
+
+  /**
+   * 获取所有分类
+   * @returns 分类 Map，key 为分类名称
+   */
+  getCategories(): Promise<Map<string, Category>>
+
+  /**
+   * 创建分类
+   * @param name - 分类名称
+   * @param savePath - 保存路径（可选）
+   */
+  createCategory(name: string, savePath?: string): Promise<void>
+
+  /**
+   * 编辑分类
+   * @param name - 原分类名称
+   * @param newName - 新分类名称（可选）
+   * @param savePath - 新保存路径（可选）
+   */
+  editCategory(name: string, newName?: string, savePath?: string): Promise<void>
+
+  /**
+   * 删除分类
+   * @param names - 分类名称数组
+   */
+  deleteCategories(...names: string[]): Promise<void>
+
+  /**
+   * 设置分类保存路径
+   * @param category - 分类名称
+   * @param savePath - 保存路径
+   */
+  setCategorySavePath(category: string, savePath: string): Promise<void>
+
+  // ========== 标签管理 ==========
+
+  /**
+   * 获取所有标签
+   * @returns 标签数组
+   */
+  getTags(): Promise<string[]>
+
+  /**
+   * 创建标签
+   * @param tags - 标签数组
+   */
+  createTags(...tags: string[]): Promise<void>
+
+  /**
+   * 删除标签
+   * @param tags - 标签数组
+   */
+  deleteTags(...tags: string[]): Promise<void>
 }

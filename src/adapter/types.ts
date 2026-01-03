@@ -126,10 +126,14 @@ export interface UnifiedTorrentDetail {
   category: string
   tags: string[]
 
-  // 连接信息
+  // 连接信息（实际连接数）
   connections: number
-  numSeeds: number
-  numLeechers: number
+  numSeeds: number        // 已连接的种子数
+  numLeechers: number     // 已连接的下载者数
+
+  // Swarm 统计（整个 swarn 的总数）
+  totalSeeds?: number     // Swarm 中的总种子数
+  totalLeechers?: number  // Swarm 中的总下载者数
 
   // 详情数据
   files: TorrentFile[]

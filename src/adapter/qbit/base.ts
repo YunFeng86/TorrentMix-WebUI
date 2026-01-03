@@ -237,6 +237,8 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     ])
 
     const props = propsRes.data
+    const peers = Object.values(peersRes.data?.peers || {}) as QBPeer[]
+
     return {
       hash: props.hash,
       name: props.name,
@@ -251,38 +253,72 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       savePath: props.save_path,
       category: props.category,
       tags: props.tags ? props.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
-      connections: props.connections_limit,
-      numSeeds: props.num_complete,
-      numLeechers: props.num_incomplete,
+
+      // 实际连接数（从 peers 数组统计）
+      // 注意：sync/torrentPeers 返回可能受数量/分页限制，统计值未必等于真实全量连接数
+      connections: peers.length,
+
+      // 已连接的 seeds/leechers（从 peers 数组过滤）
+      numSeeds: peers.filter((p: QBPeer) => p.progress === 1).length,
+      numLeechers: peers.filter((p: QBPeer) => p.progress >= 0 && p.progress < 1).length,
+
+      // Swarm 统计（整个 swarm 的总数）
+      totalSeeds: props.num_complete,
+      totalLeechers: props.num_incomplete,
+
       files: (filesRes.data || []).map(f => this.normalizeFile(f)),
       trackers: (trackersRes.data || []).map(t => this.normalizeTracker(t)),
-      peers: Object.values(peersRes.data?.peers || {}).map(p => this.normalizePeer(p as QBPeer))
+      peers: peers.map(p => this.normalizePeer(p))
     }
   }
 
   async recheck(hash: string): Promise<void> {
-    await apiClient.post('/api/v2/torrents/recheck', null, { params: { hashes: hash } })
+    await this.recheckBatch([hash])
+  }
+
+  async recheckBatch(hashes: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/recheck', null, {
+      params: { hashes: hashes.join('|') || 'all' }
+    })
   }
 
   async reannounce(hash: string): Promise<void> {
-    await apiClient.post('/api/v2/torrents/reannounce', null, { params: { hashes: hash } })
+    await this.reannounceBatch([hash])
+  }
+
+  async reannounceBatch(hashes: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/reannounce', null, {
+      params: { hashes: hashes.join('|') || 'all' }
+    })
   }
 
   async forceStart(hash: string, value: boolean): Promise<void> {
+    await this.forceStartBatch([hash], value)
+  }
+
+  async forceStartBatch(hashes: string[], value: boolean): Promise<void> {
     await apiClient.post('/api/v2/torrents/setForceStart', null, {
-      params: { hashes: hash, value: value.toString() }
+      params: { hashes: hashes.join('|') || 'all', value: value.toString() }
     })
   }
 
   async setDownloadLimit(hash: string, limit: number): Promise<void> {
+    await this.setDownloadLimitBatch([hash], limit)
+  }
+
+  async setDownloadLimitBatch(hashes: string[], limit: number): Promise<void> {
     await apiClient.post('/api/v2/torrents/setDownloadLimit', null, {
-      params: { hashes: hash, limit: limit.toString() }
+      params: { hashes: hashes.join('|') || 'all', limit: limit.toString() }
     })
   }
 
   async setUploadLimit(hash: string, limit: number): Promise<void> {
+    await this.setUploadLimitBatch([hash], limit)
+  }
+
+  async setUploadLimitBatch(hashes: string[], limit: number): Promise<void> {
     await apiClient.post('/api/v2/torrents/setUploadLimit', null, {
-      params: { hashes: hash, limit: limit.toString() }
+      params: { hashes: hashes.join('|') || 'all', limit: limit.toString() }
     })
   }
 
@@ -293,20 +329,28 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   }
 
   async setCategory(hash: string, category: string): Promise<void> {
+    await this.setCategoryBatch([hash], category)
+  }
+
+  async setCategoryBatch(hashes: string[], category: string): Promise<void> {
     await apiClient.post('/api/v2/torrents/setCategory', null, {
-      params: { hashes: hash, category: category || '' }
+      params: { hashes: hashes.join('|') || 'all', category: category || '' }
     })
   }
 
   async setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
+    await this.setTagsBatch([hash], tags, mode)
+  }
+
+  async setTagsBatch(hashes: string[], tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
     const safeTags = tags.map(t => t.trim()).filter(Boolean)
-    const hashes = hash || 'all'
+    const hashesParam = hashes.join('|') || 'all'
 
     const tryCall = async (endpoint: string, payloadTags: string[]) => {
       if (payloadTags.length === 0) return
       try {
         await apiClient.post(endpoint, null, {
-          params: { hashes, tags: payloadTags.join(',') }
+          params: { hashes: hashesParam, tags: payloadTags.join(',') }
         })
       } catch (err: unknown) {
         const status = (err as { response?: { status?: number } })?.response?.status
@@ -325,28 +369,88 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       return
     }
 
-    const current = this.currentMap.get(hash)?.tags ?? []
-    const currentSet = new Set(current)
-    const desiredSet = new Set(safeTags)
+    // mode === 'set' 需要为每个种子单独处理
+    if (hashes.length === 1 && hashes[0]) {
+      const hash = hashes[0]
+      const current = this.currentMap.get(hash)?.tags ?? []
+      const currentSet = new Set(current)
+      const desiredSet = new Set(safeTags)
 
-    const toRemove: string[] = []
-    for (const t of currentSet) {
-      if (!desiredSet.has(t)) toRemove.push(t)
+      const toRemove: string[] = []
+      for (const t of currentSet) {
+        if (!desiredSet.has(t)) toRemove.push(t)
+      }
+
+      const toAdd: string[] = []
+      for (const t of desiredSet) {
+        if (!currentSet.has(t)) toAdd.push(t)
+      }
+
+      await tryCall('/api/v2/torrents/removeTags', toRemove)
+      await tryCall('/api/v2/torrents/addTags', toAdd)
+    } else {
+      // 批量 set 模式：直接替换所有标签
+      await tryCall('/api/v2/torrents/setTags', safeTags)
     }
-
-    const toAdd: string[] = []
-    for (const t of desiredSet) {
-      if (!currentSet.has(t)) toAdd.push(t)
-    }
-
-    await tryCall('/api/v2/torrents/removeTags', toRemove)
-    await tryCall('/api/v2/torrents/addTags', toAdd)
   }
 
   async setFilePriority(hash: string, fileIds: number[], priority: 'high' | 'normal' | 'low' | 'do_not_download'): Promise<void> {
     const priorityMap = { high: 6, normal: 1, low: 1, do_not_download: 0 }
     await apiClient.post('/api/v2/torrents/filePrio', null, {
       params: { hash, id: fileIds.join('|'), priority: priorityMap[priority].toString() }
+    })
+  }
+
+  // ========== 分类管理 ==========
+
+  async getCategories(): Promise<Map<string, Category>> {
+    const res = await apiClient.get<Record<string, Category>>('/api/v2/torrents/categories')
+    return new Map(Object.entries(res.data))
+  }
+
+  async createCategory(name: string, savePath?: string): Promise<void> {
+    const params: Record<string, string> = { name }
+    if (savePath) params.savePath = savePath
+    await apiClient.post('/api/v2/torrents/createCategory', null, { params })
+  }
+
+  async editCategory(name: string, newName?: string, savePath?: string): Promise<void> {
+    const params: Record<string, string> = {}
+    if (newName) params.name = newName
+    if (savePath) params.savePath = savePath
+    await apiClient.post('/api/v2/torrents/editCategory', null, {
+      params: { category: name, ...params }
+    })
+  }
+
+  async deleteCategories(...names: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/removeCategories', null, {
+      params: { categories: names.join('\n') }
+    })
+  }
+
+  async setCategorySavePath(category: string, savePath: string): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setCategorySavePath', null, {
+      params: { category, savePath }
+    })
+  }
+
+  // ========== 标签管理 ==========
+
+  async getTags(): Promise<string[]> {
+    const res = await apiClient.get<string[]>('/api/v2/torrents/tags')
+    return res.data
+  }
+
+  async createTags(...tags: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/createTags', null, {
+      params: { tags: tags.join(',') }
+    })
+  }
+
+  async deleteTags(...tags: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/deleteTags', null, {
+      params: { tags: tags.join(',') }
     })
   }
 

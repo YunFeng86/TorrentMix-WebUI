@@ -14,6 +14,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   click: [event: Event]
+  action: [action: string, hash: string]
 }>()
 
 const columnById = computed<Record<string, ColumnState | undefined>>(() => {
@@ -228,7 +229,27 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
       class="flex-none shrink-0 px-3 py-2 min-w-0"
       :style="getFlexStyle('actions', true)"
       v-show="columnById['actions']?.visible ?? true"
-    ></div>
+    >
+      <div class="flex items-center gap-1">
+        <!-- 暂停/恢复切换 -->
+        <button
+          @click.stop="emit('action', torrent.state === 'paused' ? 'resume' : 'pause', torrent.id)"
+          class="p-1 hover:bg-gray-100 rounded"
+          :title="torrent.state === 'paused' ? '开始' : '暂停'"
+        >
+          <Icon :name="torrent.state === 'paused' ? 'play' : 'pause'" :size="14" />
+        </button>
+
+        <!-- 删除按钮 -->
+        <button
+          @click.stop="emit('action', 'delete', torrent.id)"
+          class="p-1 hover:bg-red-50 text-red-600 rounded"
+          title="删除"
+        >
+          <Icon name="trash-2" :size="14" />
+        </button>
+      </div>
+    </div>
   </div>
 </template>
 
