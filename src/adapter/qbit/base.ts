@@ -275,13 +275,13 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   }
 
   async setDownloadLimit(hash: string, limit: number): Promise<void> {
-    await apiClient.post('/api/v2/torrents/setDlLimit', null, {
+    await apiClient.post('/api/v2/torrents/setDownloadLimit', null, {
       params: { hashes: hash, limit: limit.toString() }
     })
   }
 
   async setUploadLimit(hash: string, limit: number): Promise<void> {
-    await apiClient.post('/api/v2/torrents/setUpLimit', null, {
+    await apiClient.post('/api/v2/torrents/setUploadLimit', null, {
       params: { hashes: hash, limit: limit.toString() }
     })
   }
@@ -299,15 +299,54 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   }
 
   async setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
-    await apiClient.post('/api/v2/torrents/setTags', null, {
-      params: { hashes: hash, tags: tags.join(','), operation: mode }
-    })
+    const safeTags = tags.map(t => t.trim()).filter(Boolean)
+    const hashes = hash || 'all'
+
+    const tryCall = async (endpoint: string, payloadTags: string[]) => {
+      if (payloadTags.length === 0) return
+      try {
+        await apiClient.post(endpoint, null, {
+          params: { hashes, tags: payloadTags.join(',') }
+        })
+      } catch (err: unknown) {
+        const status = (err as { response?: { status?: number } })?.response?.status
+        if (status === 404 || status === 405) return
+        throw err
+      }
+    }
+
+    if (mode === 'add') {
+      await tryCall('/api/v2/torrents/addTags', safeTags)
+      return
+    }
+
+    if (mode === 'remove') {
+      await tryCall('/api/v2/torrents/removeTags', safeTags)
+      return
+    }
+
+    const current = this.currentMap.get(hash)?.tags ?? []
+    const currentSet = new Set(current)
+    const desiredSet = new Set(safeTags)
+
+    const toRemove: string[] = []
+    for (const t of currentSet) {
+      if (!desiredSet.has(t)) toRemove.push(t)
+    }
+
+    const toAdd: string[] = []
+    for (const t of desiredSet) {
+      if (!currentSet.has(t)) toAdd.push(t)
+    }
+
+    await tryCall('/api/v2/torrents/removeTags', toRemove)
+    await tryCall('/api/v2/torrents/addTags', toAdd)
   }
 
   async setFilePriority(hash: string, fileIds: number[], priority: 'high' | 'normal' | 'low' | 'do_not_download'): Promise<void> {
-    const priorityMap = { high: 1, normal: 0, low: -1, do_not_download: -2 }
+    const priorityMap = { high: 6, normal: 1, low: 1, do_not_download: 0 }
     await apiClient.post('/api/v2/torrents/filePrio', null, {
-      params: { hash, id: fileIds.join(','), priority: priorityMap[priority].toString() }
+      params: { hash, id: fileIds.join('|'), priority: priorityMap[priority].toString() }
     })
   }
 
@@ -347,16 +386,21 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       addedTime: raw.added_on ?? existing?.addedTime ?? 0,
       savePath: raw.save_path ?? existing?.savePath ?? '',
       category: raw.category || existing?.category,
-      tags: raw.tags ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : existing?.tags
+      tags: raw.tags ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : existing?.tags,
+      numSeeds: raw.num_seeds ?? existing?.numSeeds ?? 0,
+      numPeers: raw.num_leechs ?? existing?.numPeers ?? 0
     }
   }
 
   protected normalizeFile(file: QBFile): TorrentFile {
+    const index = (typeof file.index === 'number' ? file.index : file.id) ?? 0
+
     let priority: TorrentFile['priority'] = 'normal'
-    if (file.priority === 1) priority = 'high'
-    else if (file.priority === -1) priority = 'low'
-    else if (file.priority === -2) priority = 'do_not_download'
-    return { id: file.id, name: file.name, size: file.size, progress: file.progress, priority }
+    // qB file priority values: 0=do not download, 1=normal, 6=high, 7=maximal
+    if (file.priority === 0 || file.priority === -2) priority = 'do_not_download'
+    else if (file.priority === 6 || file.priority === 7) priority = 'high'
+
+    return { id: index, name: file.name, size: file.size, progress: file.progress, priority }
   }
 
   protected normalizeTracker(tracker: QBTracker): Tracker {

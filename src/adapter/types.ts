@@ -66,7 +66,7 @@ export interface QBTorrent {
   hash: string;
   name: string;
   state: string;
-  progress: number;    // 0 - 1000000
+  progress: number;    // 0.0 - 1.0 (percentage/100)
   size: number;
   dlspeed: number;
   upspeed: number;
@@ -76,6 +76,8 @@ export interface QBTorrent {
   save_path: string;
   category?: string;
   tags?: string;
+  num_seeds?: number;
+  num_leechs?: number;
 }
 
 // qBittorrent sync/maindata 响应
@@ -187,7 +189,10 @@ export interface QBTorrentProperties {
 
 // qBittorrent 文件信息
 export interface QBFile {
-  id: number
+  // qB WebUI API uses `index` as the stable file id (since WebAPI 2.8.2).
+  // Some older responses may omit `index`; keep `id` as a fallback.
+  index?: number
+  id?: number
   name: string
   size: number
   progress: number
