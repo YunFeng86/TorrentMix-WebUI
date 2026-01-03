@@ -1,18 +1,31 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
-import { useBackendStore } from '@/store/backend'
+import { detectBackendTypeOnly } from '@/adapter/detect'
+import type { BackendType } from '@/adapter/detect'
 import Icon from '@/components/Icon.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
-const backendStore = useBackendStore()
 
 const username = ref('')
 const password = ref('')
 const error = ref('')
 const loading = ref(false)
+const detecting = ref(true)
+const backendType = ref<BackendType | null>(null)
+
+// 页面加载时检测后端类型（使用缓存）
+onMounted(async () => {
+  try {
+    backendType.value = await detectBackendTypeOnly()
+  } catch {
+    backendType.value = null
+  } finally {
+    detecting.value = false
+  }
+})
 
 async function handleSubmit() {
   loading.value = true
@@ -28,6 +41,13 @@ async function handleSubmit() {
     loading.value = false
   }
 }
+
+// 获取后端显示名称
+function getBackendName(): string {
+  if (backendType.value === 'qbit') return 'qBittorrent'
+  if (backendType.value === 'trans') return 'Transmission'
+  return '种子管理器'
+}
 </script>
 
 <template>
@@ -39,7 +59,10 @@ async function handleSubmit() {
           <Icon name="download-cloud" :size="24" class="text-white" />
         </div>
         <h1 class="text-2xl font-semibold text-gray-900 mb-2">登录</h1>
-        <p class="text-gray-500 text-sm">访问种子管理系统</p>
+        <p class="text-gray-500 text-sm">
+          <span v-if="detecting">正在检测后端...</span>
+          <span v-else>访问 {{ getBackendName() }}</span>
+        </p>
       </div>
 
       <!-- 登录表单 -->
@@ -57,6 +80,7 @@ async function handleSubmit() {
               placeholder="输入用户名"
               required
               autocomplete="username"
+              :disabled="detecting"
             />
           </div>
 
@@ -72,6 +96,7 @@ async function handleSubmit() {
               placeholder="输入密码"
               required
               autocomplete="current-password"
+              :disabled="detecting"
             />
           </div>
 
@@ -86,12 +111,12 @@ async function handleSubmit() {
           <!-- 登录按钮 -->
           <button
             type="submit"
-            :disabled="loading"
-            class="btn-primary w-full py-2.5 font-medium"
+            :disabled="loading || detecting"
+            class="btn-primary w-full py-2.5 font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <div class="flex items-center justify-center gap-2">
               <Icon v-if="loading" name="loader-2" :size="16" class="animate-spin text-white" />
-              {{ loading ? '登录中...' : '登录' }}
+              {{ loading ? '登录中...' : detecting ? '检测中...' : '登录' }}
             </div>
           </button>
         </form>
@@ -100,7 +125,8 @@ async function handleSubmit() {
       <!-- 底部信息 -->
       <div class="text-center mt-8">
         <p class="text-xs text-gray-400">
-          {{ backendStore.backendName }} WebUI
+          <span v-if="detecting">正在检测后端类型...</span>
+          <span v-else>{{ getBackendName() }} WebUI</span>
         </p>
       </div>
     </div>

@@ -1,4 +1,5 @@
-import { apiClient, silentApiClient } from '@/api/client'
+import { apiClient, silentApiClient, getQbitBaseUrl } from '@/api/client'
+import axios from 'axios'
 import type {
   UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState, Category, ServerState,
   UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
@@ -129,9 +130,26 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     const params = new URLSearchParams()
     params.append('username', username)
     params.append('password', password)
-    const response = await apiClient.post('/api/v2/auth/login', params, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+
+    // 创建专门的登录客户端，避免使用 apiClient 的拦截器（会转换 403 为 AuthError）
+    // 同时需要 withCredentials: true 来接收 session cookie
+    const loginClient = axios.create({
+      baseURL: getQbitBaseUrl(),
+      timeout: 10000,
+      withCredentials: true
     })
+
+    const response = await loginClient.post('/api/v2/auth/login', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      validateStatus: (status) => status < 500  // 只接受 2xx-4xx，让业务代码处理
+    })
+
+    if (response.status !== 200) {
+      // 403 = 登录失败（用户名或密码错误）
+      // 其他 = 网络错误或服务器错误
+      throw new Error(response.status === 403 ? '用户名或密码错误' : `登录失败: HTTP ${response.status}`)
+    }
+
     if (response.data !== 'Ok.') {
       throw new Error(response.data === 'Fails.' ? '用户名或密码错误' : `登录失败: ${response.data}`)
     }

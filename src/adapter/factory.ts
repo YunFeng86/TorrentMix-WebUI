@@ -9,18 +9,22 @@ const VERSION_CACHE_KEY = 'webui_backend_version'
 
 export interface CachedVersion extends BackendVersion {
   timestamp: number
+  isUnknown?: boolean  // 是否为未知版本（未认证时）
 }
 
 export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: BackendVersion }> {
-  let version: BackendVersion
+  let version: BackendVersion & { isUnknown?: boolean }
 
-  // 尝试从缓存加载
+  // 尝试从缓存加载（但跳过未知版本）
   const cached = loadVersionCache()
-  if (cached && Date.now() - cached.timestamp < 3600000) {
+  if (cached && !cached.isUnknown && Date.now() - cached.timestamp < 3600000) {
     version = cached
   } else {
     version = await detectBackendWithVersion()
-    saveVersionCache(version)
+    // 只缓存已知版本
+    if (!version.isUnknown) {
+      saveVersionCache(version)
+    }
   }
 
   let adapter: BaseAdapter

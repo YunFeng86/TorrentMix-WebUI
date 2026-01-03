@@ -4,9 +4,6 @@ import router from './router'
 import App from './App.vue'
 import './style.css'
 
-import { createAdapter } from './adapter/factory'
-import { useBackendStore } from './store/backend'
-
 const vClickOutside = {
   mounted(el: HTMLElement & { _clickOutside?: (event: MouseEvent) => void }, binding: { value: () => void }) {
     el._clickOutside = (event: MouseEvent) => {
@@ -23,21 +20,11 @@ const vClickOutside = {
   }
 }
 
-async function bootstrap() {
-  const app = createApp(App)
-  const pinia = createPinia()
+// 简化启动流程：先挂载应用，登录后再初始化适配器
+const app = createApp(App)
+const pinia = createPinia()
 
-  app.use(pinia)
-  app.directive('click-outside', vClickOutside)
-
-  const { adapter, version } = await createAdapter()
-  const backendStore = useBackendStore()
-  backendStore.setAdapter(adapter, version)
-
-  app.use(router)
-  app.mount('#app')
-}
-
-bootstrap().catch(err => {
-  console.error('[Bootstrap] Failed to start application:', err)
-})
+app.use(pinia)
+app.directive('click-outside', vClickOutside)
+app.use(router)
+app.mount('#app')
