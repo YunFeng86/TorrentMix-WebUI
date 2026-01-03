@@ -6,6 +6,8 @@ import { useTorrentStore } from '@/store/torrent'
 import { useAuthStore } from '@/store/auth'
 import { useBackendStore } from '@/store/backend'
 import { usePolling } from '@/composables/usePolling'
+import { useTableColumns } from '@/composables/useTableColumns'
+import { TORRENT_TABLE_COLUMNS } from '@/composables/useTableColumns/configs'
 import { AuthError } from '@/api/client'
 import type { UnifiedTorrent } from '@/adapter/types'
 import type { AddTorrentParams } from '@/adapter/interface'
@@ -14,6 +16,8 @@ import TorrentCard from '@/components/torrent/TorrentCard.vue'
 import AddTorrentDialog from '@/components/AddTorrentDialog.vue'
 import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
 import TorrentBottomPanel from '@/components/TorrentBottomPanel.vue'
+import ResizableTableHeader from '@/components/table/ResizableTableHeader.vue'
+import ColumnVisibilityMenu from '@/components/table/ColumnVisibilityMenu.vue'
 import Icon from '@/components/Icon.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
 
@@ -38,6 +42,16 @@ const searchQuery = ref('')
 const debouncedSearchQuery = ref('')  // 用于过滤的实际搜索词（防抖后）
 const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
+const tableScrollRef = ref<HTMLElement | null>(null)
+
+// 表格列宽调整与可见性控制
+const {
+  columns,
+  resizeState,
+  startResize,
+  toggleVisibility,
+  resetToDefaults
+} = useTableColumns('torrents', TORRENT_TABLE_COLUMNS)
 
 // 搜索防抖：300ms 后才更新过滤条件
 const updateSearch = useDebounceFn((value: string) => {
@@ -797,6 +811,14 @@ onUnmounted(() => {
             </button>
           </div>
 
+          <!-- 列设置 -->
+          <div class="w-px h-8 bg-gray-200 mx-2"></div>
+          <ColumnVisibilityMenu
+            :columns="columns"
+            @toggle-visibility="toggleVisibility"
+            @reset="resetToDefaults"
+          />
+
           <!-- 全选 -->
           <button @click="selectAll" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150">
             {{ selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选' }}
@@ -839,75 +861,69 @@ onUnmounted(() => {
         </div>
 
         <!-- 种子列表容器：flex-1 自动填充剩余空间 -->
-        <div class="flex-1 overflow-auto min-h-0">
+        <div class="flex-1 overflow-hidden min-h-0">
           <!-- 桌面端列表视图 -->
-          <div class="hidden md:block h-full">
-            <!-- 虚拟滚动（大量种子时） -->
-            <div v-if="useVirtualScroll" class="h-full flex flex-col">
-              <!-- 表头 -->
-              <div class="shrink-0 bg-gray-100 border-b border-gray-200 flex items-center text-xs text-gray-600 uppercase tracking-wide">
-                <div class="w-12 px-3 py-3"></div>
-                <button @click="toggleSort('name')" class="flex-1 px-3 py-3 text-left hover:bg-gray-200 transition-colors cursor-pointer">
-                  种子 {{ getSortIcon('name') }}
-                </button>
-                <button @click="toggleSort('progress')" class="w-32 px-3 py-3 hover:bg-gray-200 transition-colors cursor-pointer">
-                  进度 {{ getSortIcon('progress') }}
-                </button>
-                <button @click="toggleSort('dlSpeed')" class="w-20 px-3 py-3 text-right hover:bg-gray-200 transition-colors cursor-pointer">
-                  下载 {{ getSortIcon('dlSpeed') }}
-                </button>
-                <button @click="toggleSort('upSpeed')" class="w-20 px-3 py-3 text-right hidden md:flex hover:bg-gray-200 transition-colors cursor-pointer">
-                  上传 {{ getSortIcon('upSpeed') }}
-                </button>
-                <button @click="toggleSort('eta')" class="w-16 px-3 py-3 text-right hidden lg:flex hover:bg-gray-200 transition-colors cursor-pointer whitespace-nowrap">
-                  剩余时间 {{ getSortIcon('eta') }}
-                </button>
-                <div class="w-16 px-3 py-3"></div>
-              </div>
-              <!-- 虚拟列表：直接成为滚动容器 -->
+          <div class="hidden md:flex h-full min-h-0 flex-col">
+            <!-- 表头 -->
+            <ResizableTableHeader
+              :columns="columns"
+              :resize-state="resizeState"
+              @start-resize="(leftId, rightId, startX, snapshots) => startResize(leftId, rightId, startX, snapshots)"
+              @toggle-sort="(columnId) => toggleSort(columnId as SortField)"
+            >
+              <template #header-name="{ column }">
+                {{ column.label }} {{ getSortIcon('name') }}
+              </template>
+              <template #header-progress="{ column }">
+                {{ column.label }} {{ getSortIcon('progress') }}
+              </template>
+              <template #header-dlSpeed="{ column }">
+                {{ column.label }} {{ getSortIcon('dlSpeed') }}
+              </template>
+              <template #header-upSpeed="{ column }">
+                {{ column.label }} {{ getSortIcon('upSpeed') }}
+              </template>
+              <template #header-eta="{ column }">
+                {{ column.label }} {{ getSortIcon('eta') }}
+              </template>
+            </ResizableTableHeader>
+
+            <!-- 列表滚动容器：单一滚动条（避免嵌套） -->
+            <div
+              ref="tableScrollRef"
+              class="flex-1 overflow-auto overflow-x-hidden min-h-0"
+              style="scrollbar-gutter: stable;"
+            >
+              <!-- 虚拟滚动（大量种子时） -->
               <VirtualTorrentList
-                v-if="sortedTorrents.length > 0"
+                v-if="useVirtualScroll && sortedTorrents.length > 0"
                 :torrents="sortedTorrents"
                 :selected-hashes="selectedHashes"
+                :columns="columns"
+                :scroll-element="tableScrollRef"
+                :is-resizing="resizeState.isResizing"
                 @click="selectTorrentForDetail"
                 @toggle-select="toggleSelect"
                 @action="handleTorrentAction"
               />
-              <div v-else class="px-4 py-16 text-center flex-1 flex items-center justify-center">
-                <div class="flex flex-col items-center gap-4">
-                  <Icon name="inbox" :size="48" class="text-gray-300" />
-                  <div class="text-gray-500">
-                    <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
-                    <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
-                  </div>
-                </div>
-              </div>
-            </div>
 
-            <!-- 普通列表（少量种子时） -->
-            <div v-else class="h-full flex flex-col">
-              <!-- 表头 -->
-              <div class="sticky top-0 bg-gray-100 border-b border-gray-200 z-10 shrink-0 flex items-center text-xs text-gray-600 uppercase tracking-wide">
-                <div class="w-12 px-3 py-3"></div>
-                <button @click="toggleSort('name')" class="flex-1 px-3 py-3 text-left hover:bg-gray-200 transition-colors cursor-pointer">
-                  种子 {{ getSortIcon('name') }}
-                </button>
-                <button @click="toggleSort('progress')" class="w-32 px-3 py-3 hover:bg-gray-200 transition-colors cursor-pointer">
-                  进度 {{ getSortIcon('progress') }}
-                </button>
-                <button @click="toggleSort('dlSpeed')" class="w-20 px-3 py-3 text-right hover:bg-gray-200 transition-colors cursor-pointer">
-                  下载 {{ getSortIcon('dlSpeed') }}
-                </button>
-                <button @click="toggleSort('upSpeed')" class="w-20 px-3 py-3 text-right hidden md:flex hover:bg-gray-200 transition-colors cursor-pointer">
-                  上传 {{ getSortIcon('upSpeed') }}
-                </button>
-                <button @click="toggleSort('eta')" class="w-16 px-3 py-3 text-right hidden lg:flex hover:bg-gray-200 transition-colors cursor-pointer whitespace-nowrap">
-                  剩余时间 {{ getSortIcon('eta') }}
-                </button>
-                <div class="w-16 px-3 py-3"></div>
-              </div>
-              <!-- 列表内容 -->
-              <div v-if="sortedTorrents.length === 0" class="px-4 py-16 text-center">
+              <!-- 普通列表（少量种子时） -->
+              <template v-else-if="sortedTorrents.length > 0">
+                <TorrentRow
+                  v-for="torrent in sortedTorrents"
+                  :key="torrent.id"
+                  :torrent="torrent"
+                  :selected="selectedHashes.has(torrent.id)"
+                  :columns="columns"
+                  :is-resizing="resizeState.isResizing"
+                  @click="selectTorrentForDetail(torrent.id, $event)"
+                  @toggle-select="toggleSelect($event.detail)"
+                  @action="handleTorrentAction"
+                />
+              </template>
+
+              <!-- 空状态 -->
+              <div v-else class="px-4 py-16 text-center h-full flex items-center justify-center">
                 <div class="flex flex-col items-center gap-4">
                   <Icon name="inbox" :size="48" class="text-gray-300" />
                   <div class="text-gray-500">
@@ -916,20 +932,11 @@ onUnmounted(() => {
                   </div>
                 </div>
               </div>
-              <TorrentRow
-                v-for="torrent in sortedTorrents"
-                :key="torrent.id"
-                :torrent="torrent"
-                :selected="selectedHashes.has(torrent.id)"
-                @click="selectTorrentForDetail(torrent.id, $event)"
-                @toggle-select="toggleSelect($event.detail)"
-                @action="handleTorrentAction"
-              />
             </div>
           </div>
 
           <!-- 移动端卡片视图 -->
-          <div class="md:hidden p-4">
+          <div class="md:hidden h-full overflow-auto p-4">
             <!-- 空状态 -->
             <div v-if="sortedTorrents.length === 0" class="text-center py-16">
               <Icon name="inbox" :size="64" class="text-gray-300 mx-auto mb-4" />

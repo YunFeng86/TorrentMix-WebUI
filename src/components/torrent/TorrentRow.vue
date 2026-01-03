@@ -1,13 +1,46 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import type { UnifiedTorrent } from '@/adapter/types'
+import type { ColumnState } from '@/composables/useTableColumns/types'
 import { formatBytes, formatSpeed } from '@/utils/format'
 import Icon from '@/components/Icon.vue'
 
-const props = defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
+const props = defineProps<{
+  torrent: UnifiedTorrent
+  selected: boolean
+  columns: ColumnState[]
+  isResizing?: boolean
+}>()
 
 const emit = defineEmits<{
   click: [event: Event]
 }>()
+
+const columnById = computed<Record<string, ColumnState | undefined>>(() => {
+  const map: Record<string, ColumnState | undefined> = {}
+  for (const col of props.columns) {
+    map[col.id] = col
+  }
+  return map
+})
+
+function getFlexStyle(columnId: string, fixed = false) {
+  const column = columnById.value[columnId]
+  const width = column?.currentWidth ?? 0
+  const minWidth = column?.minWidth ?? 0
+
+  if (fixed || props.isResizing) {
+    return {
+      flex: `0 0 ${width}px`,
+      minWidth: `${minWidth}px`
+    }
+  }
+
+  return {
+    flex: `${Math.max(1, width)} 1 ${width}px`,
+    minWidth: `${minWidth}px`
+  }
+}
 
 // 处理复选框点击，切换选择状态
 function handleCheckboxClick(e: MouseEvent) {
@@ -78,12 +111,16 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
 <template>
   <!-- div-based table row, compatible with virtual scrolling -->
   <div
-    class="torrent-row cursor-pointer group flex items-center"
+    class="torrent-row cursor-pointer group flex items-center w-full min-w-0"
     :class="{ 'bg-blue-50 border-blue-200': selected }"
     @click="$emit('click', $event)"
   >
     <!-- 选择器 -->
-    <div class="col-checkbox flex items-center justify-center px-3 py-2 shrink-0">
+    <div
+      class="col-checkbox flex-none shrink-0 flex items-center justify-center px-3 py-2 min-w-0"
+      :style="getFlexStyle('checkbox', true)"
+      v-show="columnById['checkbox']?.visible ?? true"
+    >
       <input
         type="checkbox"
         :checked="selected"
@@ -93,7 +130,11 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
     </div>
 
     <!-- 种子名称与状态 -->
-    <div class="col-torrent px-3 py-2 min-w-0 flex-1">
+    <div
+      class="col-torrent flex-initial px-3 py-2 min-w-0"
+      :style="getFlexStyle('name')"
+      v-show="columnById['name']?.visible ?? true"
+    >
       <div class="flex items-center gap-3">
         <!-- 状态图标 -->
         <div class="flex-shrink-0">
@@ -119,7 +160,11 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
     </div>
 
     <!-- 进度条 -->
-    <div class="col-progress px-3 py-2 w-32 shrink-0">
+    <div
+      class="col-progress flex-initial px-3 py-2 min-w-0"
+      :style="getFlexStyle('progress')"
+      v-show="columnById['progress']?.visible ?? true"
+    >
       <div class="space-y-1">
         <div class="flex items-center justify-between">
           <span class="text-xs font-mono text-gray-600">
@@ -144,28 +189,46 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
     </div>
 
     <!-- 下载速度 -->
-    <div class="col-dl-speed px-3 py-2 w-20 text-right shrink-0">
+    <div
+      class="col-dl-speed flex-initial px-3 py-2 text-right min-w-0"
+      :style="getFlexStyle('dlSpeed')"
+      v-show="columnById['dlSpeed']?.visible ?? true"
+    >
       <div class="text-sm font-mono text-gray-900 whitespace-nowrap">
         ↓ {{ formatSpeed(torrent.dlspeed) }}
       </div>
     </div>
 
     <!-- 上传速度 (PC端) -->
-    <div class="col-ul-speed px-3 py-2 w-20 text-right shrink-0 hidden md:block">
+    <div
+      class="col-ul-speed flex-initial px-3 py-2 text-right min-w-0"
+      :class="{ 'hidden md:block': columnById['upSpeed']?.responsiveHidden === 'md' }"
+      :style="getFlexStyle('upSpeed')"
+      v-show="columnById['upSpeed']?.visible ?? true"
+    >
       <div class="text-sm font-mono text-gray-900 whitespace-nowrap">
         ↑ {{ formatSpeed(torrent.upspeed) }}
       </div>
     </div>
 
     <!-- ETA (大屏端) -->
-    <div class="col-eta px-3 py-2 w-16 text-right shrink-0 hidden lg:flex items-center justify-end">
+    <div
+      class="col-eta flex-initial px-3 py-2 text-right min-w-0"
+      :class="{ 'hidden lg:flex': columnById['eta']?.responsiveHidden === 'lg' }"
+      :style="getFlexStyle('eta')"
+      v-show="columnById['eta']?.visible ?? true"
+    >
       <div class="text-sm font-mono text-gray-600">
         {{ formatETA(torrent.eta, torrent.progress, torrent.state) }}
       </div>
     </div>
 
     <!-- 操作按钮 -->
-    <div class="w-16 px-3 py-2"></div>
+    <div
+      class="flex-none shrink-0 px-3 py-2 min-w-0"
+      :style="getFlexStyle('actions', true)"
+      v-show="columnById['actions']?.visible ?? true"
+    ></div>
   </div>
 </template>
 

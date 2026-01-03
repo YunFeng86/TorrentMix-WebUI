@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { UnifiedTorrentDetail, UnifiedTorrent, TorrentFile } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
 import { formatBytes, formatSpeed } from '@/utils/format'
 import { useDragResize } from '@/composables/useDragResize'
+import { useTableColumns } from '@/composables/useTableColumns'
+import { FILE_TABLE_COLUMNS, TRACKER_TABLE_COLUMNS, PEER_TABLE_COLUMNS } from '@/composables/useTableColumns/configs'
+import ResizableTableHeader from '@/components/table/ResizableTableHeader.vue'
 
 interface Props {
   torrent: UnifiedTorrent | null
@@ -43,6 +46,46 @@ const {
   minHeight: 200,
   maxHeight: 800
 })
+
+// ========== Tab tables: splitter-based resizable columns ==========
+const {
+  columns: filesColumns,
+  resizeState: filesResizeState,
+  startResize: startFilesResize
+} = useTableColumns('torrent-files', FILE_TABLE_COLUMNS)
+
+const {
+  columns: trackersColumns,
+  resizeState: trackersResizeState,
+  startResize: startTrackersResize
+} = useTableColumns('torrent-trackers', TRACKER_TABLE_COLUMNS)
+
+const {
+  columns: peersColumns,
+  resizeState: peersResizeState,
+  startResize: startPeersResize
+} = useTableColumns('torrent-peers', PEER_TABLE_COLUMNS)
+
+const filesColumnById = computed(() => Object.fromEntries(filesColumns.value.map(c => [c.id, c])))
+const trackersColumnById = computed(() => Object.fromEntries(trackersColumns.value.map(c => [c.id, c])))
+const peersColumnById = computed(() => Object.fromEntries(peersColumns.value.map(c => [c.id, c])))
+
+function getFlexStyle(
+  columnById: Record<string, { currentWidth: number; minWidth: number } | undefined>,
+  columnId: string,
+  fixed = false,
+  isColumnResizing = false
+) {
+  const column = columnById[columnId]
+  const width = column?.currentWidth ?? 0
+  const minWidth = column?.minWidth ?? 0
+
+  if (fixed || isColumnResizing) {
+    return { flex: `0 0 ${width}px`, minWidth: `${minWidth}px` }
+  }
+
+  return { flex: `${Math.max(1, width)} 1 ${width}px`, minWidth: `${minWidth}px` }
+}
 
 // 监听外部高度变化（非拖拽时）
 watch(() => props.height, (newHeight) => {
@@ -367,9 +410,9 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
       </div>
 
       <!-- 详情内容 -->
-      <div v-else-if="detail" class="h-full overflow-auto">
+      <div v-else-if="detail" class="h-full overflow-hidden flex flex-col">
         <!-- 概览 Tab -->
-        <div v-if="activeTab === 'overview'" class="p-4 space-y-6">
+        <div v-if="activeTab === 'overview'" class="flex-1 overflow-auto p-4 space-y-6">
           <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <!-- 传输统计 -->
             <div class="space-y-4">
@@ -453,35 +496,48 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <!-- 文件 Tab -->
         <div v-else-if="activeTab === 'files'" class="h-full flex flex-col">
           <!-- 表头 -->
-          <div class="flex items-center px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-600 shrink-0">
-            <div class="flex-1 min-w-0">文件名</div>
-            <div class="w-20 text-right">大小</div>
-            <div class="w-24 text-right">进度</div>
-            <div class="w-14 text-center">优先级</div>
-          </div>
+          <ResizableTableHeader
+            :columns="filesColumns"
+            :resize-state="filesResizeState"
+            @start-resize="(leftId, rightId, startX, snapshots) => startFilesResize(leftId, rightId, startX, snapshots)"
+          />
 
           <!-- 文件树列表 -->
-          <div class="flex-1 overflow-auto">
+          <div class="flex-1 overflow-auto" style="scrollbar-gutter: stable;">
             <template v-for="node in buildFileTree(detail.files)" :key="node.path">
               <!-- 文件夹节点 -->
               <div v-if="node.type === 'folder'">
                 <div
                   @click="toggleFolder(node.path)"
-                  class="flex items-center px-3 py-1.5 hover:bg-gray-50 border-b border-gray-100 cursor-pointer text-sm"
-                  :style="{ paddingLeft: `${8 + node.level * 16}px` }"
+                  class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 cursor-pointer text-sm"
                 >
-                  <Icon
-                    :name="expandedFolders.has(node.path) ? 'chevron-down' : 'chevron-right'"
-                    :size="12"
-                    class="text-gray-400 shrink-0 mr-1"
-                  />
-                  <Icon name="folder" :size="14" class="text-yellow-500 shrink-0 mr-1.5" />
-                  <span class="truncate text-gray-700 flex-1">{{ node.name }}</span>
-                  <span class="font-mono text-xs text-gray-500">
+                  <!-- 文件名 -->
+                  <div
+                    class="min-w-0 px-3"
+                    :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
+                  >
+                    <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + node.level * 16}px` }">
+                      <Icon
+                        :name="expandedFolders.has(node.path) ? 'chevron-down' : 'chevron-right'"
+                        :size="12"
+                        class="text-gray-400 shrink-0 mr-1"
+                      />
+                      <Icon name="folder" :size="14" class="text-yellow-500 shrink-0 mr-1.5" />
+                      <span class="truncate text-gray-700">{{ node.name }}</span>
+                    </div>
+                  </div>
+
+                  <!-- 大小 -->
+                  <div
+                    class="px-3 text-right font-mono text-xs text-gray-500"
+                    :style="getFlexStyle(filesColumnById, 'size', false, filesResizeState.isResizing)"
+                  >
                     {{ formatBytes(calculateFolderStats(node).size) }}
-                  </span>
-                  <div class="w-24 px-2 shrink-0 ml-2">
-                    <div class="flex items-center gap-1.5">
+                  </div>
+
+                  <!-- 进度 -->
+                  <div class="px-3" :style="getFlexStyle(filesColumnById, 'progress', false, filesResizeState.isResizing)">
+                    <div class="flex items-center gap-1.5 justify-end">
                       <div class="flex-1 bg-gray-200 rounded h-1 min-w-0">
                         <div
                           class="bg-blue-500 h-1 rounded transition-all"
@@ -493,6 +549,11 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                       </span>
                     </div>
                   </div>
+
+                  <!-- 优先级 -->
+                  <div class="px-3 text-center text-xs text-gray-400" :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)">
+                    -
+                  </div>
                 </div>
 
                 <!-- 递归渲染子节点 -->
@@ -502,21 +563,35 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                     <div v-if="child.type === 'folder'">
                       <div
                         @click="toggleFolder(child.path)"
-                        class="flex items-center px-3 py-1.5 hover:bg-gray-50 border-b border-gray-100 cursor-pointer text-sm"
-                        :style="{ paddingLeft: `${8 + child.level * 16}px` }"
+                        class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 cursor-pointer text-sm"
                       >
-                        <Icon
-                          :name="expandedFolders.has(child.path) ? 'chevron-down' : 'chevron-right'"
-                          :size="12"
-                          class="text-gray-400 shrink-0 mr-1"
-                        />
-                        <Icon name="folder" :size="14" class="text-yellow-500 shrink-0 mr-1.5" />
-                        <span class="truncate text-gray-700 flex-1">{{ child.name }}</span>
-                        <span class="font-mono text-xs text-gray-500">
+                        <!-- 文件名 -->
+                        <div
+                          class="min-w-0 px-3"
+                          :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
+                        >
+                          <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + child.level * 16}px` }">
+                            <Icon
+                              :name="expandedFolders.has(child.path) ? 'chevron-down' : 'chevron-right'"
+                              :size="12"
+                              class="text-gray-400 shrink-0 mr-1"
+                            />
+                            <Icon name="folder" :size="14" class="text-yellow-500 shrink-0 mr-1.5" />
+                            <span class="truncate text-gray-700">{{ child.name }}</span>
+                          </div>
+                        </div>
+
+                        <!-- 大小 -->
+                        <div
+                          class="px-3 text-right font-mono text-xs text-gray-500"
+                          :style="getFlexStyle(filesColumnById, 'size', false, filesResizeState.isResizing)"
+                        >
                           {{ formatBytes(calculateFolderStats(child).size) }}
-                        </span>
-                        <div class="w-24 px-2 shrink-0 ml-2">
-                          <div class="flex items-center gap-1.5">
+                        </div>
+
+                        <!-- 进度 -->
+                        <div class="px-3" :style="getFlexStyle(filesColumnById, 'progress', false, filesResizeState.isResizing)">
+                          <div class="flex items-center gap-1.5 justify-end">
                             <div class="flex-1 bg-gray-200 rounded h-1 min-w-0">
                               <div
                                 class="bg-blue-500 h-1 rounded transition-all"
@@ -528,6 +603,11 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                             </span>
                           </div>
                         </div>
+
+                        <!-- 优先级 -->
+                        <div class="px-3 text-center text-xs text-gray-400" :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)">
+                          -
+                        </div>
                       </div>
 
                       <!-- 继续递归子文件夹 -->
@@ -536,17 +616,31 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                           <!-- 文件 -->
                           <div
                             v-if="grandchild.type === 'file'"
-                            class="flex items-center px-3 py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
-                            :style="{ paddingLeft: `${8 + grandchild.level * 16}px` }"
+                            class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
                           >
-                            <span class="w-3.5 shrink-0"></span>
-                            <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
-                            <span class="truncate text-gray-900 flex-1">{{ grandchild.name }}</span>
-                            <span class="font-mono text-xs text-gray-600">
+                            <!-- 文件名 -->
+                            <div
+                              class="min-w-0 px-3"
+                              :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
+                            >
+                              <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + grandchild.level * 16}px` }">
+                                <span class="w-3.5 shrink-0"></span>
+                                <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
+                                <span class="truncate text-gray-900">{{ grandchild.name }}</span>
+                              </div>
+                            </div>
+
+                            <!-- 大小 -->
+                            <div
+                              class="px-3 text-right font-mono text-xs text-gray-600"
+                              :style="getFlexStyle(filesColumnById, 'size', false, filesResizeState.isResizing)"
+                            >
                               {{ formatBytes(grandchild.size!) }}
-                            </span>
-                            <div class="w-24 px-2 shrink-0 ml-2">
-                              <div class="flex items-center gap-1.5">
+                            </div>
+
+                            <!-- 进度 -->
+                            <div class="px-3" :style="getFlexStyle(filesColumnById, 'progress', false, filesResizeState.isResizing)">
+                              <div class="flex items-center gap-1.5 justify-end">
                                 <div class="flex-1 bg-gray-200 rounded h-1 min-w-0">
                                   <div
                                     class="bg-blue-500 h-1 rounded transition-all"
@@ -558,9 +652,15 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                                 </span>
                               </div>
                             </div>
-                            <span class="text-xs font-medium w-14 text-center shrink-0 ml-2" :class="priorityMap[grandchild.priority!]?.class || 'text-gray-600'">
+
+                            <!-- 优先级 -->
+                            <div
+                              class="px-3 text-center text-xs font-medium"
+                              :class="priorityMap[grandchild.priority!]?.class || 'text-gray-600'"
+                              :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)"
+                            >
                               {{ priorityMap[grandchild.priority!]?.text || grandchild.priority }}
-                            </span>
+                            </div>
                           </div>
                         </template>
                       </template>
@@ -569,17 +669,31 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                     <!-- 文件节点（直接子节点） -->
                     <div
                       v-else
-                      class="flex items-center px-3 py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
-                      :style="{ paddingLeft: `${8 + child.level * 16}px` }"
+                      class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
                     >
-                      <span class="w-3.5 shrink-0"></span>
-                      <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
-                      <span class="truncate text-gray-900 flex-1">{{ child.name }}</span>
-                      <span class="font-mono text-xs text-gray-600">
+                      <!-- 文件名 -->
+                      <div
+                        class="min-w-0 px-3"
+                        :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
+                      >
+                        <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + child.level * 16}px` }">
+                          <span class="w-3.5 shrink-0"></span>
+                          <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
+                          <span class="truncate text-gray-900">{{ child.name }}</span>
+                        </div>
+                      </div>
+
+                      <!-- 大小 -->
+                      <div
+                        class="px-3 text-right font-mono text-xs text-gray-600"
+                        :style="getFlexStyle(filesColumnById, 'size', false, filesResizeState.isResizing)"
+                      >
                         {{ formatBytes(child.size!) }}
-                      </span>
-                      <div class="w-24 px-2 shrink-0 ml-2">
-                        <div class="flex items-center gap-1.5">
+                      </div>
+
+                      <!-- 进度 -->
+                      <div class="px-3" :style="getFlexStyle(filesColumnById, 'progress', false, filesResizeState.isResizing)">
+                        <div class="flex items-center gap-1.5 justify-end">
                           <div class="flex-1 bg-gray-200 rounded h-1 min-w-0">
                             <div
                               class="bg-blue-500 h-1 rounded transition-all"
@@ -591,9 +705,15 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                           </span>
                         </div>
                       </div>
-                      <span class="text-xs font-medium w-14 text-center shrink-0 ml-2" :class="priorityMap[child.priority!]?.class || 'text-gray-600'">
+
+                      <!-- 优先级 -->
+                      <div
+                        class="px-3 text-center text-xs font-medium"
+                        :class="priorityMap[child.priority!]?.class || 'text-gray-600'"
+                        :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)"
+                      >
                         {{ priorityMap[child.priority!]?.text || child.priority }}
-                      </span>
+                      </div>
                     </div>
                   </template>
                 </template>
@@ -602,17 +722,31 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               <!-- 顶级文件节点（无文件夹） -->
               <div
                 v-else
-                class="flex items-center px-3 py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
-                :style="{ paddingLeft: `${8 + node.level * 16}px` }"
+                class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
               >
-                <span class="w-3.5 shrink-0"></span>
-                <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
-                <span class="truncate text-gray-900 flex-1">{{ node.name }}</span>
-                <span class="font-mono text-xs text-gray-600">
+                <!-- 文件名 -->
+                <div
+                  class="min-w-0 px-3"
+                  :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
+                >
+                  <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + node.level * 16}px` }">
+                    <span class="w-3.5 shrink-0"></span>
+                    <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
+                    <span class="truncate text-gray-900">{{ node.name }}</span>
+                  </div>
+                </div>
+
+                <!-- 大小 -->
+                <div
+                  class="px-3 text-right font-mono text-xs text-gray-600"
+                  :style="getFlexStyle(filesColumnById, 'size', false, filesResizeState.isResizing)"
+                >
                   {{ formatBytes(node.size!) }}
-                </span>
-                <div class="w-24 px-2 shrink-0 ml-2">
-                  <div class="flex items-center gap-1.5">
+                </div>
+
+                <!-- 进度 -->
+                <div class="px-3" :style="getFlexStyle(filesColumnById, 'progress', false, filesResizeState.isResizing)">
+                  <div class="flex items-center gap-1.5 justify-end">
                     <div class="flex-1 bg-gray-200 rounded h-1 min-w-0">
                       <div
                         class="bg-blue-500 h-1 rounded transition-all"
@@ -624,9 +758,15 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
                     </span>
                   </div>
                 </div>
-                <span class="text-xs font-medium w-14 text-center shrink-0 ml-2" :class="priorityMap[node.priority!]?.class || 'text-gray-600'">
+
+                <!-- 优先级 -->
+                <div
+                  class="px-3 text-center text-xs font-medium"
+                  :class="priorityMap[node.priority!]?.class || 'text-gray-600'"
+                  :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)"
+                >
                   {{ priorityMap[node.priority!]?.text || node.priority }}
-                </span>
+                </div>
               </div>
             </template>
           </div>
@@ -640,22 +780,21 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <!-- 服务器 Tab -->
         <div v-else-if="activeTab === 'trackers'" class="h-full flex flex-col">
           <!-- 表头 -->
-          <div class="flex items-center px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-600 shrink-0">
-            <div class="flex-1 min-w-0">Tracker</div>
-            <div class="w-16 text-center">状态</div>
-            <div class="w-10 text-right">Peers</div>
-            <div class="w-8 text-right">Tier</div>
-          </div>
+          <ResizableTableHeader
+            :columns="trackersColumns"
+            :resize-state="trackersResizeState"
+            @start-resize="(leftId, rightId, startX, snapshots) => startTrackersResize(leftId, rightId, startX, snapshots)"
+          />
 
           <!-- Tracker 列表 -->
-          <div class="flex-1 overflow-auto">
+          <div class="flex-1 overflow-auto" style="scrollbar-gutter: stable;">
             <div
               v-for="(tracker, index) in detail.trackers"
               :key="index"
-              class="flex items-center px-3 py-2 hover:bg-gray-50 border-b border-gray-100 text-sm"
+              class="flex items-center py-2 hover:bg-gray-50 border-b border-gray-100 text-sm"
             >
               <!-- URL -->
-              <div class="flex-1 min-w-0 pr-3">
+              <div class="min-w-0 px-3" :style="getFlexStyle(trackersColumnById, 'url', false, trackersResizeState.isResizing)">
                 <span class="truncate font-mono text-gray-900 text-xs block">
                   {{ tracker.url }}
                 </span>
@@ -665,7 +804,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               </div>
 
               <!-- 状态 -->
-              <div class="w-16 text-center shrink-0">
+              <div class="px-3 text-center shrink-0" :style="getFlexStyle(trackersColumnById, 'status', false, trackersResizeState.isResizing)">
                 <span
                   class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium"
                   :class="trackerStatusMap[tracker.status]?.class || 'bg-gray-100 text-gray-600'"
@@ -676,12 +815,12 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               </div>
 
               <!-- Peers -->
-              <div class="w-10 text-right font-mono text-xs text-gray-600 shrink-0">
+              <div class="px-3 text-right font-mono text-xs text-gray-600 shrink-0" :style="getFlexStyle(trackersColumnById, 'peers', false, trackersResizeState.isResizing)">
                 {{ tracker.peers }}
               </div>
 
               <!-- Tier -->
-              <div class="w-8 text-right text-xs text-gray-600 shrink-0">
+              <div class="px-3 text-right text-xs text-gray-600 shrink-0" :style="getFlexStyle(trackersColumnById, 'tier', false, trackersResizeState.isResizing)">
                 {{ tracker.tier }}
               </div>
             </div>
@@ -696,37 +835,35 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <!-- Peers Tab -->
         <div v-else-if="activeTab === 'peers'" class="h-full flex flex-col">
           <!-- 表头 -->
-          <div class="flex items-center px-3 py-1.5 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-600 shrink-0">
-            <div class="w-28">地址</div>
-            <div class="flex-1 min-w-0">客户端</div>
-            <div class="w-16 text-right">进度</div>
-            <div class="w-20 text-right">下载</div>
-            <div class="w-20 text-right">上传</div>
-          </div>
+          <ResizableTableHeader
+            :columns="peersColumns"
+            :resize-state="peersResizeState"
+            @start-resize="(leftId, rightId, startX, snapshots) => startPeersResize(leftId, rightId, startX, snapshots)"
+          />
 
           <!-- Peer 列表 -->
-          <div class="flex-1 overflow-auto">
+          <div class="flex-1 overflow-auto" style="scrollbar-gutter: stable;">
             <div
               v-for="(peer, index) in detail.peers"
               :key="index"
-              class="flex items-center px-3 py-2 hover:bg-gray-50 border-b border-gray-100 text-sm"
+              class="flex items-center py-2 hover:bg-gray-50 border-b border-gray-100 text-sm"
             >
               <!-- IP:Port -->
-              <div class="w-28 pr-2 shrink-0">
+              <div class="px-3 shrink-0" :style="getFlexStyle(peersColumnById, 'address', false, peersResizeState.isResizing)">
                 <span class="font-mono text-gray-900 truncate text-xs block">
                   {{ peer.ip }}:{{ peer.port }}
                 </span>
               </div>
 
               <!-- 客户端 -->
-              <div class="flex-1 min-w-0 pr-3">
+              <div class="min-w-0 px-3" :style="getFlexStyle(peersColumnById, 'client', false, peersResizeState.isResizing)">
                 <span class="truncate text-gray-700 text-xs block">
                   {{ peer.client || 'Unknown' }}
                 </span>
               </div>
 
               <!-- 进度 -->
-              <div class="w-16 text-right shrink-0">
+              <div class="px-3 text-right shrink-0" :style="getFlexStyle(peersColumnById, 'progress', false, peersResizeState.isResizing)">
                 <div class="flex items-center justify-end gap-1.5">
                   <div class="w-10 bg-gray-200 rounded h-1 shrink-0">
                     <div
@@ -741,14 +878,14 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               </div>
 
               <!-- 下载速度 -->
-              <div class="w-20 text-right font-mono text-xs shrink-0">
+              <div class="px-3 text-right font-mono text-xs shrink-0" :style="getFlexStyle(peersColumnById, 'dlSpeed', false, peersResizeState.isResizing)">
                 <span :class="peer.dlSpeed > 0 ? 'text-blue-600' : 'text-gray-400'">
                   {{ formatSpeed(peer.dlSpeed) }}
                 </span>
               </div>
 
               <!-- 上传速度 -->
-              <div class="w-20 text-right font-mono text-xs shrink-0">
+              <div class="px-3 text-right font-mono text-xs shrink-0" :style="getFlexStyle(peersColumnById, 'upSpeed', false, peersResizeState.isResizing)">
                 <span :class="peer.upSpeed > 0 ? 'text-cyan-600' : 'text-gray-400'">
                   {{ formatSpeed(peer.upSpeed) }}
                 </span>

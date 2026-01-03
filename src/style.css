@@ -38,13 +38,13 @@
     font-family: 'JetBrains Mono', 'SF Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
   }
   
-  /* 优化滚动条样式 */
-  ::-webkit-scrollbar {
-    @apply w-1;
-  }
-  ::-webkit-scrollbar-track {
-    @apply bg-gray-100;
-  }
+	  /* 优化滚动条样式 */
+	  ::-webkit-scrollbar {
+	    @apply w-1 h-1;
+	  }
+	  ::-webkit-scrollbar-track {
+	    @apply bg-gray-100;
+	  }
   ::-webkit-scrollbar-thumb {
     @apply bg-gray-300 rounded-full;
   }

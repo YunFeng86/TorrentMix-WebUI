@@ -2,11 +2,15 @@
 import { ref } from 'vue'
 import { useVirtualizer } from '@tanstack/vue-virtual'
 import type { UnifiedTorrent } from '@/adapter/types'
+import type { ColumnState } from '@/composables/useTableColumns/types'
 import TorrentRow from './torrent/TorrentRow.vue'
 
 interface Props {
   torrents: UnifiedTorrent[]
   selectedHashes: Set<string>
+  columns: ColumnState[]
+  scrollElement?: HTMLElement | null
+  isResizing?: boolean
 }
 
 interface Emits {
@@ -28,30 +32,30 @@ function handleToggleSelect(event: Event) {
   emit('toggle-select', customEvent.detail)
 }
 
-const parentRef = ref<HTMLElement | null>(null)
+const internalScrollRef = ref<HTMLElement | null>(null)
 
 // 虚拟滚动配置：使用自身作为滚动容器
 const virtualizer = useVirtualizer({
   get count() {
     return props.torrents.length
   },
-  getScrollElement: () => parentRef.value,
+  getScrollElement: () => (props.scrollElement !== undefined ? props.scrollElement : internalScrollRef.value),
   estimateSize: () => 60,
   overscan: 5
 })
 </script>
 
 <template>
-  <!-- 虚拟滚动容器：flex-1 填充剩余空间并处理滚动 -->
-  <div ref="parentRef" class="flex-1 overflow-auto min-h-0">
-    <div
-      :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }"
-    >
+  <!-- 如果不传入 scrollElement，则组件自身作为滚动容器 -->
+  <div v-if="scrollElement === undefined" ref="internalScrollRef" class="flex-1 overflow-auto overflow-x-hidden min-h-0">
+    <div :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }">
       <TorrentRow
         v-for="virtualRow in virtualizer.getVirtualItems()"
         :key="String(virtualRow.key)"
         :torrent="torrents[virtualRow.index]!"
         :selected="selectedHashes.has(torrents[virtualRow.index]!.id)"
+        :columns="columns"
+        :is-resizing="isResizing"
         @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
         @toggle-select="handleToggleSelect"
         :style="{
@@ -64,5 +68,27 @@ const virtualizer = useVirtualizer({
         }"
       />
     </div>
+  </div>
+
+  <!-- 外部提供滚动容器：仅渲染内容，不再嵌套第二层滚动条 -->
+  <div v-else :style="{ height: `${virtualizer.getTotalSize()}px`, position: 'relative' }">
+    <TorrentRow
+      v-for="virtualRow in virtualizer.getVirtualItems()"
+      :key="String(virtualRow.key)"
+      :torrent="torrents[virtualRow.index]!"
+      :selected="selectedHashes.has(torrents[virtualRow.index]!.id)"
+      :columns="columns"
+      :is-resizing="isResizing"
+      @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
+      @toggle-select="handleToggleSelect"
+      :style="{
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: `${virtualRow.size}px`,
+        transform: `translateY(${virtualRow.start}px)`
+      }"
+    />
   </div>
 </template>
