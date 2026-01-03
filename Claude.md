@@ -6,7 +6,7 @@
 
 **Core Tech**: Vue 3 (Script Setup), TypeScript, Vite, Tailwind CSS, Shadcn Vue.
 
-**Target Backends**: qBittorrent (WebAPI v2) & Transmission (RPC).
+**Target Backends**: qBittorrent (WebAPI v2, **全版本支持**) & Transmission (RPC, **全版本支持**).
 
 **Deployment**: 纯静态资源 (完全本地化)，通过 Docker 挂载或 WebUI 目录替换运行。
 
@@ -21,6 +21,9 @@
 **职责**: 负责应用启动时的环境探测、依赖注入和全局配置。
 
 - **探测逻辑**: 在 main.ts 挂载前，异步请求 `/api/v2/app/version` (qB) 和 `/transmission/rpc` (TR)。
+  - 📖 **API 参考**:
+    - [qBittorrent - Get application version](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-application-version)
+    - [Transmission - Session get](../docs/Transmission's%20RPC%20specification(main).md#412-accessors)
 - **决策**: 根据响应头决定实例化 QbitAdapter 还是 TransAdapter。
 - **依赖注入**: 使用 Vue provide/inject 或 Pinia 将选定的 Adapter 实例注入全局。
 - **PWA (可选)**: 主要用于移动端访问，桃心功能是离线缓存和快捷方式。
@@ -37,7 +40,20 @@
   - 状态统一映射为枚举: `Downloading | Seeding | Paused | Checking | Error | Queued`.
 - **特殊处理**:
   - **qBittorrent**: 处理 sync/maindata 的 RID 和 partial data 合并逻辑。
+    - 📖 **API 文档**: [docs/WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20(qBittorrent%205.0).md) (最新版)
+    - 📖 **历史版本**: [4.1](../docs/WebUI%20API%20(qBittorrent%204.1).md) | [v3.2-v4.0](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md) | [v3.1.x](../docs/WebUI%20API%20(qBittorrent%20v3.1.x).md)
+    - 关键端点: `/api/v2/torrents/info`, `/api/v2/sync/maindata`
+    - 状态字段映射参考文档中的 `state` 枚举值
+    - **版本检测**: 通过 `/api/v2/app/webapiVersion` 判断 API 版本，适配不同版本的差异
   - **Transmission**: 封装 JSON-RPC body，处理字段过滤 (fields filtering)。
+    - 📖 **API 文档**: [docs/Transmission's RPC specification(main).md](../docs/Transmission's%20RPC%20specification(main).md) (最新版)
+    - 📖 **历史版本**: [4.0.6](../docs/Transmission's%20RPC%20specification(4.0.6).md)
+    - 关键方法: `torrent_get`, `torrent_set`, `torrent_add`, `torrent_remove`
+    - 状态字段映射参考文档中的 `status` 数值 (0-6)
+    - **协议兼容**:
+      - 4.1.0+: JSON-RPC 2.0 + snake_case
+      - 4.0.x: 旧协议 (kebab-case/camelCase 混用)
+      - 自动检测并适配协议版本
 
 ### 3. 🛡️ Module: Network Layer (Auth & Transport)
 
@@ -48,10 +64,18 @@
   - 拦截 403 Forbidden -> 跳转登录页。
   - **注意**: qB的 session cookie 有时效，需要定期检查并重新登录。
   - **CORS 问题**: 需要 qBittorrent 开启跨域支持或使用代理。
+  - 📖 **认证 API**: 参考 [docs/WebUI API (qBittorrent 5.0).md - Authentication](../docs/WebUI%20API%20(qBittorrent%205.0).md#authentication)
+    - 登录端点: `POST /api/v2/auth/login`
+    - 需要设置 `Referer` 或 `Origin` header
+    - 返回 SID cookie 用于后续请求认证
 - **Transmission 策略**:
   - **自动 CSRF 握手**: 拦截 409 Conflict -> 提取 header 中的 `X-Transmission-Session-Id` -> 更新 Store (作用域隔离) -> 自动重发原请求。
   - **安全认证**: 使用加密存储或会话内输入，禁止 localStorage 明文存储。
   - **注意**: Session ID 在某些情况下会失效，需要重新获取。
+  - 📖 **CSRF 保护**: 参考 [docs/Transmission's RPC specification(main).md - CSRF protection](../docs/Transmission's%20RPC%20specification(main).md#221-csrf-protection)
+    - 首次请求或 Session 过期返回 409
+    - 从响应头提取新的 `X-Transmission-Session-Id`
+    - 使用新 Session ID 重试原请求
 
 ### 4. 🧠 Module: State & View (Store + UI)
 
@@ -362,6 +386,287 @@ src/
 
 ---
 
+## 📚 API Documentation References
+
+本项目实现了对 qBittorrent 和 Transmission **全版本覆盖**的适配层。所有 API 实现必须参考以下官方文档，并根据检测到的后端版本动态适配。
+
+### 版本覆盖策略
+
+**核心原则**: 从最新版本 API 向下兼容，自动检测并适配不同版本的差异。
+
+- ✅ **qBittorrent**: v3.1.x → v5.0+ (WebAPI v2)
+- ✅ **Transmission**: v2.x → v4.1+ (RPC)
+- 🔧 **自动检测**: 启动时探测后端类型和版本
+- 🛡️ **优雅降级**: 新特性在旧版本上静默失效
+
+---
+
+### qBittorrent Web API (全版本覆盖)
+
+**文档列表** (按版本从新到旧):
+
+| 版本范围 | 文档 | API 特性 |
+|---------|------|---------|
+| **v5.0+** (最新) | [WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20(qBittorrent%205.0).md) | WebAPI v2.11.3+, cookies API, reannounce 支持 |
+| **v4.1.x - v4.6.x** | [WebUI API (qBittorrent 4.1).md](../docs/WebUI%20API%20(qBittorrent%204.1).md) | WebAPI v2.8.3+, torrent rename |
+| **v3.2.x - v4.0.x** | [WebUI API (qBittorrent v3.2.0 v4.0.4).md](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md) | WebAPI v2.0-v2.8, sync/maindata |
+| **v3.1.x** | [WebUI API (qBittorrent v3.1.x).md](../docs/WebUI%20API%20(qBittorrent%20v3.1.x).md) | 早期 API |
+
+**版本检测方法**:
+```typescript
+// 1. 获取 API 版本
+GET /api/v2/app/webapiVersion
+// 返回: "2.11.3" (示例)
+
+// 2. 获取应用版本
+GET /api/v2/app/version
+// 返回: "v5.0.0" (示例)
+
+// 3. 根据版本决定可用特性
+const apiVersion = parseFloat(webapiVersion)
+if (apiVersion >= 2.11) {
+  // 支持 cookies API
+} else if (apiVersion >= 2.8) {
+  // 支持 torrent rename
+}
+```
+
+**关键章节**:
+- **Authentication** (`/api/v2/auth/*`)
+  - [Login](../docs/WebUI%20API%20(qBittorrent%205.0).md#login): POST 请求，返回 SID cookie
+  - [Logout](../docs/WebUI%20API%20(qBittorrent%205.0).md#logout): 清除会话
+- **Application** (`/api/v2/app/*`)
+  - [Get application version](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-application-version): `GET /api/v2/app/version`
+  - [Get API version](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-api-version): `GET /api/v2/app/webapiVersion`
+  - 用于后端类型检测和版本兼容性判断
+- **Sync** (`/api/v2/sync/*`)
+  - [Get main data](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-main-data): `GET /api/v2/sync/maindata`
+  - 支持 RID (Replica ID) 机制实现增量更新
+  - 返回 `torrents` 数组（只包含变化的种子）
+- **Torrent Management** (`/api/v2/torrents/*`)
+  - [Get torrent list](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-torrent-list): `GET /api/v2/torrents/info`
+  - [Add new torrent](../docs/WebUI%20API%20(qBittorrent%205.0).md#add-new-torrent): `POST /api/v2/torrents/add`
+  - [Pause/Resume torrents](../docs/WebUI%20API%20(qBittorrent%205.0).md#pause-torrents): POST `/pause` / `/resume`
+  - [Delete torrents](../docs/WebUI%20API%20(qBittorrent%205.0).md#delete-torrents): `POST /api/v2/torrents/delete`
+
+**状态映射**: 参考 API 返回的 `state` 字段，映射到统一的 `TorrentState` 枚举
+```
+queuedPAUSED -> Paused
+queuedUP -> Queued
+uploading -> Seeding
+stalledUP -> Seeding
+downloading -> Downloading
+stalledDL -> Downloading
+checkingDL/CheckingUP -> Checking
+error -> Error
+```
+
+---
+
+### Transmission RPC Protocol (全版本覆盖)
+
+**文档列表** (按版本从新到旧):
+
+| 版本范围 | 文档 | 协议特性 |
+|---------|------|---------|
+| **v4.1.0+** (最新) | [Transmission's RPC specification(main).md](../docs/Transmission's%20RPC%20specification(main).md) | JSON-RPC 2.0, snake_case, rpc_version_semver |
+| **v2.80 - v4.0.x** | [Transmission's RPC specification(4.0.6).md](../docs/Transmission's%20RPC%20specification(4.0.6).md) | 旧协议 (kebab-case/camelCase) |
+
+**版本检测方法**:
+```typescript
+// 1. 首次请求会返回 409，从响应头获取版本
+// X-Transmission-Rpc-Version: 6.0.0 (Transmission 4.1.0+)
+
+// 2. 或者通过 session_get 获取版本
+{
+  "method": "session_get",
+  "jsonrpc": "2.0",
+  "id": 1
+}
+// 响应中的 rpc_version_semver: "6.0.0"
+
+// 3. 判断协议版本
+if (rpc_version_semver >= "6.0.0") {
+  // 使用 JSON-RPC 2.0 + snake_case
+  method: "torrent_get"
+  params: { fields: ["id", "name"] }
+} else {
+  // 使用旧协议 (camelCase/kebab-case 混用)
+  method: "torrent-get"
+  arguments: { fields: ["id", "name"] }
+}
+```
+
+**协议差异**:
+
+**JSON-RPC 2.0** (Transmission 4.1.0+):
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "torrent_get",
+  "params": { "fields": ["id", "name", "status"], "ids": [1, 2] },
+  "id": 1
+}
+```
+
+**旧协议** (Transmission 4.0.x 及以下):
+```json
+{
+  "method": "torrent-get",
+  "arguments": { "fields": ["id", "name", "status"], "ids": [1, 2] },
+  "tag": 1
+}
+```
+
+**关键章节**:
+- **Message Format**: JSON-RPC 2.0 协议（Transmission 4.1+）
+  - 所有请求必须包含 `"jsonrpc": "2.0"`
+  - 参数通过 `"params"` 对象传递
+  - 请求格式示例:
+    ```json
+    {
+      "jsonrpc": "2.0",
+      "method": "torrent_get",
+      "params": { "fields": ["id", "name", "status"], "ids": [1, 2] },
+      "id": 1
+    }
+    ```
+- **CSRF Protection** (2.2.1)
+  - 首次请求或 Session 过期返回 HTTP 409
+  - 从响应头提取 `X-Transmission-Session-Id`
+  - 重试原请求时带上该 header
+- **Torrent Requests**
+  - [torrent_get](../docs/Transmission's%20RPC%20specification(main).md#33-torrent-accessor-torrent_get): 获取种子列表和详细信息
+    - 支持字段过滤 (`fields` 参数) 减少响应体积
+    - 支持 `ids` 过滤特定种子
+  - [torrent_add](../docs/Transmission's%20RPC%20specification(main).md#34-adding-a-torrent): 添加种子
+  - [torrent_remove](../docs/Transmission's%20RPC%20specification(main).md#35-removing-a-torrent): 删除种子
+  - [torrent_start/stop](../docs/Transmission's%20RPC%20specification(main).md#31-torrent-action-requests): 控制种子启停
+  - [torrent_set](../docs/Transmission's%20RPC%20specification(main).md#32-torrent-mutator-torrent_set): 修改种子属性
+- **Session Requests**
+  - [session_get](../docs/Transmission's%20RPC%20specification(main).md#412-accessors): 获取会话信息和版本
+    - `rpc_version_semver`: API 版本（如 "6.0.0"）
+    - `version`: Transmission 版本字符串
+
+**状态映射**: 根据 `status` 数值映射到统一枚举
+```
+0 -> Paused (stopped)
+1 -> Queued (queued to verify)
+2 -> Checking (verifying)
+3 -> Queued (queued to download)
+4 -> Downloading
+5 -> Queued (queued to seed)
+6 -> Seeding
+```
+
+---
+
+### 后端检测与适配逻辑
+
+**Module 1: App Bootstrap** 实现后端类型和版本自动检测:
+
+```typescript
+// 推测流程 (参考 Module 1 职责描述)
+interface BackendInfo {
+  type: 'qBittorrent' | 'Transmission' | null
+  version: string
+  apiVersion: string
+  protocol: 'v2' | 'json-rpc2' | 'legacy'
+}
+
+async function detectBackend(): Promise<BackendInfo> {
+  // 步骤 1: 尝试 qBittorrent
+  try {
+    const [appVer, apiVer] = await Promise.all([
+      fetch('/api/v2/app/version'),
+      fetch('/api/v2/app/webapiVersion')
+    ])
+
+    if (appVer.ok && apiVer.ok) {
+      const version = await appVer.text()
+      const webapiVersion = await apiVer.text()
+
+      return {
+        type: 'qBittorrent',
+        version,
+        apiVersion: webapiVersion,
+        protocol: 'v2'
+      }
+    }
+  } catch {}
+
+  // 步骤 2: 尝试 Transmission
+  try {
+    const response = await fetch('/transmission/rpc', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "session_get",
+        id: 1
+      })
+    })
+
+    if (response.ok || response.status === 409) {
+      // 从响应头获取版本
+      const rpcVersion = response.headers.get('X-Transmission-Rpc-Version')
+
+      // 如果是 409，需要重新请求
+      if (response.status === 409) {
+        const sessionId = response.headers.get('X-Transmission-Session-Id')
+        // 重试请求获取版本...
+      }
+
+      return {
+        type: 'Transmission',
+        version: 'detected',
+        apiVersion: rpcVersion || 'unknown',
+        protocol: rpcVersion ? 'json-rpc2' : 'legacy'
+      }
+    }
+  } catch {}
+
+  // 步骤 3: 都不支持
+  return {
+    type: null,
+    version: 'unknown',
+    apiVersion: 'unknown',
+    protocol: 'v2'
+  }
+}
+
+// 步骤 4: 根据版本选择适配策略
+const backend = await detectBackend()
+
+if (backend.type === 'qBittorrent') {
+  const apiVer = parseFloat(backend.apiVersion)
+  adapter = new QbitAdapter({
+    supportCookies: apiVer >= 2.11,
+    supportRename: apiVer >= 2.8,
+    supportSync: apiVer >= 2.0
+  })
+} else if (backend.type === 'Transmission') {
+  adapter = new TransAdapter({
+    protocol: backend.protocol, // 'json-rpc2' or 'legacy'
+    useSnakeCase: backend.protocol === 'json-rpc2'
+  })
+}
+```
+
+**版本兼容性矩阵**:
+
+| 后端 | 版本范围 | 最低版本 | 推荐版本 | 核心特性 |
+|------|---------|---------|---------|---------|
+| **qBittorrent** | v3.1.x - v5.0+ | v3.1.x | v5.0+ | sync/maindata (v2.0+), cookies (v2.11+) |
+| **Transmission** | v2.x - v4.1+ | v2.80 | v4.1+ | 字段过滤 (全版本), JSON-RPC 2.0 (v4.1+) |
+
+**优雅降级策略**:
+1. **特性检测**: 优先检测 API 可用性，而非硬编码版本号
+2. **渐进增强**: 基础功能在所有版本可用，高级特性按需启用
+3. **错误容忍**: 旧版本不支持的操作静默失败，不影响核心功能
+
+---
+
 ## 🔧 Technology Stack (Recommended)
 
 **核心技术选型**:
@@ -385,4 +690,4 @@ src/
 
 ---
 
-*Last Updated: 2026年1月2日*
+*Last Updated: 2026年1月3日*
