@@ -985,19 +985,32 @@ onUnmounted(() => {
           </div>
 
           <!-- 右侧：速度（含限速） -->
-          <div class="flex items-center gap-4 font-mono">
-            <span>
-              ↓ {{ formatSpeed(stats.dlSpeed) }}
-              <span v-if="backendStore.serverState?.dlRateLimit && backendStore.serverState.dlRateLimit > 0" class="text-gray-400">
-                ({{ formatSpeed(backendStore.serverState.dlRateLimit) }})
+          <div class="flex items-center gap-4 font-mono text-xs">
+            <div class="flex items-center gap-1">
+              <span class="text-gray-500">↓</span>
+              <span class="font-medium">{{ formatSpeed(stats.dlSpeed) }}</span>
+              <span v-if="backendStore.serverState && backendStore.serverState.dlRateLimit > 0"
+                    class="text-gray-400 text-[10px] ml-0.5"
+                    :title="`下载限速: ${formatSpeed(backendStore.serverState.dlRateLimit)}`">
+                / {{ formatSpeed(backendStore.serverState.dlRateLimit) }}
               </span>
-            </span>
-            <span>
-              ↑ {{ formatSpeed(stats.upSpeed) }}
-              <span v-if="backendStore.serverState?.upRateLimit && backendStore.serverState.upRateLimit > 0" class="text-gray-400">
-                ({{ formatSpeed(backendStore.serverState.upRateLimit) }})
+            </div>
+            <div class="flex items-center gap-1">
+              <span class="text-gray-500">↑</span>
+              <span class="font-medium">{{ formatSpeed(stats.upSpeed) }}</span>
+              <span v-if="backendStore.serverState && backendStore.serverState.upRateLimit > 0"
+                    class="text-gray-400 text-[10px] ml-0.5"
+                    :title="`上传限速: ${formatSpeed(backendStore.serverState.upRateLimit)}`">
+                / {{ formatSpeed(backendStore.serverState.upRateLimit) }}
               </span>
-            </span>
+            </div>
+            <!-- 备用速度限制（Alt Speed）指示器 -->
+            <div v-if="backendStore.serverState?.useAltSpeed"
+                 class="flex items-center gap-1 px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px] font-medium ml-2"
+                 title="备用速度限制已启用">
+              <Icon name="gauge" :size="10" />
+              <span>ALT</span>
+            </div>
           </div>
         </div>
       </main>

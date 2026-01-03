@@ -35,6 +35,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   protected currentMap = new Map<string, UnifiedTorrent>()
   protected currentCategories = new Map<string, Category>()
   protected currentTags: string[] = []
+  protected currentServerState: ServerState | null = null
   protected consecutiveErrors = 0
 
   async fetchList(): Promise<FetchListResult> {
@@ -74,11 +75,60 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       for (const tag of data.tags_removed || []) tagSet.delete(tag)
       this.currentTags = Array.from(tagSet)
 
+      // ServerState 增量更新（类似种子的处理逻辑）
+      if (data.server_state) {
+        const rawState = data.server_state
+
+        // 检查哪些字段在原始数据中存在（区分"缺失"和"值为 0"）
+        const hasDlRateLimit = 'dl_rate_limit' in rawState
+        const hasUpRateLimit = 'up_rate_limit' in rawState
+        const hasDlInfoSpeed = 'dl_info_speed' in rawState
+        const hasUpInfoSpeed = 'up_info_speed' in rawState
+        const hasUseAltSpeed = 'use_alt_speed' in rawState
+        const hasAltDlLimit = 'alt_dl_limit' in rawState
+        const hasAltUpLimit = 'alt_up_limit' in rawState
+        const hasConnectionStatus = 'connection_status' in rawState
+        const hasPeers = 'peers' in rawState
+        const hasFreeSpace = 'free_space_on_disk' in rawState
+
+        const normalized = this.normalizeServerState(data.server_state)
+        if (normalized) {
+          // 增量合并：只更新原始数据中存在的字段
+          const merged: ServerState = {
+            dlInfoSpeed: hasDlInfoSpeed ? normalized.dlInfoSpeed : (this.currentServerState?.dlInfoSpeed ?? 0),
+            upInfoSpeed: hasUpInfoSpeed ? normalized.upInfoSpeed : (this.currentServerState?.upInfoSpeed ?? 0),
+            dlRateLimit: hasDlRateLimit ? normalized.dlRateLimit : (this.currentServerState?.dlRateLimit ?? 0),
+            upRateLimit: hasUpRateLimit ? normalized.upRateLimit : (this.currentServerState?.upRateLimit ?? 0),
+            connectionStatus: hasConnectionStatus ? normalized.connectionStatus : (this.currentServerState?.connectionStatus ?? 'disconnected'),
+            peers: hasPeers ? normalized.peers : (this.currentServerState?.peers ?? 0),
+            freeSpaceOnDisk: hasFreeSpace ? normalized.freeSpaceOnDisk : (this.currentServerState?.freeSpaceOnDisk ?? 0),
+            useAltSpeed: hasUseAltSpeed ? normalized.useAltSpeed : (this.currentServerState?.useAltSpeed ?? false),
+            altDlLimit: hasAltDlLimit ? normalized.altDlLimit : (this.currentServerState?.altDlLimit ?? 0),
+            altUpLimit: hasAltUpLimit ? normalized.altUpLimit : (this.currentServerState?.altUpLimit ?? 0),
+            backendName: normalized.backendName ?? this.currentServerState?.backendName,
+            backendVersion: normalized.backendVersion ?? this.currentServerState?.backendVersion,
+            apiVersion: normalized.apiVersion ?? this.currentServerState?.apiVersion
+          }
+
+          // 调试日志：查看限速值变化
+          if (this.currentServerState?.dlRateLimit !== merged.dlRateLimit ||
+              this.currentServerState?.upRateLimit !== merged.upRateLimit) {
+            console.log('[ServerState] Rate limits updated:', {
+              old: { dl: this.currentServerState?.dlRateLimit, up: this.currentServerState?.upRateLimit },
+              raw: { dl: normalized.dlRateLimit, up: normalized.upRateLimit, hasDl: hasDlRateLimit, hasUp: hasUpRateLimit },
+              merged: { dl: merged.dlRateLimit, up: merged.upRateLimit }
+            })
+          }
+
+          this.currentServerState = merged
+        }
+      }
+
       return {
         torrents: this.currentMap,
         categories: new Map(this.currentCategories),
         tags: [...this.currentTags],
-        serverState: this.normalizeServerState(data.server_state)
+        serverState: this.currentServerState ? { ...this.currentServerState } : undefined
       }
     } catch (error) {
       this.consecutiveErrors++
@@ -92,11 +142,20 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
           map.set(hash, this.normalize(hash, torrent))
         }
         this.currentMap = map
+
+        // 重置时更新 serverState
+        if (data.server_state) {
+          const normalized = this.normalizeServerState(data.server_state)
+          if (normalized) {
+            this.currentServerState = normalized
+          }
+        }
+
         return {
           torrents: this.currentMap,
           categories: new Map(this.currentCategories),
           tags: [...this.currentTags],
-          serverState: this.normalizeServerState(data.server_state)
+          serverState: this.currentServerState ? { ...this.currentServerState } : undefined
         }
       }
       throw error
