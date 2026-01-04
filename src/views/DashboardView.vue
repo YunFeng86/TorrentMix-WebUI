@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, watch } from 'vue'
+import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import { useTorrentStore } from '@/store/torrent'
@@ -71,6 +71,38 @@ const addError = ref('')
 // 分类/标签管理对话框
 const showCategoryManage = ref(false)
 const showTagManage = ref(false)
+
+// 窄屏搜索：折叠为按钮，使用下拉 popover 展开
+const searchPopoverOpen = ref(false)
+const searchPopoverRef = ref<HTMLElement | null>(null)
+const searchInputRef = ref<HTMLInputElement | null>(null)
+
+async function openSearchPopover() {
+  searchPopoverOpen.value = true
+  await nextTick()
+  searchInputRef.value?.focus()
+}
+
+function closeSearchPopover() {
+  searchPopoverOpen.value = false
+}
+
+async function toggleSearchPopover() {
+  if (searchPopoverOpen.value) {
+    closeSearchPopover()
+    return
+  }
+  await openSearchPopover()
+}
+
+function handleDocumentClick(e: MouseEvent) {
+  const target = e.target as Node | null
+  if (!target) return
+
+  if (searchPopoverOpen.value && searchPopoverRef.value && !searchPopoverRef.value.contains(target)) {
+    searchPopoverOpen.value = false
+  }
+}
 
 // 底部详情面板
 const showDetailPanel = ref(false)
@@ -192,6 +224,11 @@ const handleResize = () => {
   // 移动端自动折叠侧边栏
   if (isMobile.value) {
     sidebarCollapsed.value = true
+  }
+
+  // 回到较宽屏幕后收起窄屏 popover
+  if (window.innerWidth >= 1024) {
+    searchPopoverOpen.value = false
   }
 }
 
@@ -651,12 +688,14 @@ onMounted(() => {
   startPolling()
   window.addEventListener('resize', handleResize)
   window.addEventListener('keydown', handleKeyDown)
+  document.addEventListener('click', handleDocumentClick)
   handleResize() // 初始化
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('keydown', handleKeyDown)
+  document.removeEventListener('click', handleDocumentClick)
 })
 </script>
 
@@ -808,117 +847,132 @@ onUnmounted(() => {
       <!-- 右侧主内容 -->
       <main class="flex-1 flex flex-col overflow-hidden bg-white">
         <!-- 工具栏 -->
-        <div class="border-b border-gray-200 px-4 py-3 flex items-center gap-4 shrink-0">
-          <!-- 操作按钮组 -->
-          <div class="flex gap-1">
-            <!-- 添加种子按钮 -->
-            <button @click="showAddDialog = true"
-                    class="btn p-2 bg-black text-white hover:bg-gray-800 transition-all duration-150"
-                    title="添加种子">
-              <Icon name="plus" :size="16" />
-            </button>
+        <div class="border-b border-gray-200 px-3 py-2 sm:px-4 sm:py-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-4 shrink-0">
+          <!-- 第一排：主操作 + 搜索/状态/退出（窄屏更均衡） -->
+          <div class="flex items-center gap-2 w-full min-w-0 lg:contents">
+            <div class="flex items-center gap-1.5 overflow-x-auto -mx-3 px-3 sm:-mx-4 sm:px-4 flex-1 min-w-0 lg:order-1 lg:mx-0 lg:px-0 lg:overflow-visible lg:flex-none">
+              <button v-if="isMobile" @click="sidebarCollapsed = false" class="icon-btn shrink-0" title="筛选">
+                <Icon name="panel-left" :size="16" />
+              </button>
+              <button @click="showAddDialog = true" class="icon-btn icon-btn-primary shrink-0" title="添加种子">
+                <Icon name="plus" :size="16" />
+              </button>
+              <button @click="handleResume" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="开始">
+                <Icon name="play" color="blue" :size="16" />
+              </button>
+              <button @click="handlePause" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="暂停">
+                <Icon name="pause" color="gray" :size="16" />
+              </button>
+              <button @click="handleDelete" :disabled="selectedHashes.size === 0" class="icon-btn icon-btn-danger shrink-0 disabled:text-gray-400" title="删除">
+                <Icon name="trash-2" :size="16" />
+              </button>
+              <button
+                @click="selectAll"
+                class="icon-btn shrink-0 relative"
+                :title="selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选'"
+              >
+                <Icon
+                  :name="selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? 'square-x' : 'square-check'"
+                  :size="16"
+                />
+                <span
+                  v-if="selectedHashes.size > 0"
+                  class="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] leading-none rounded-full min-w-4 h-4 px-1 flex items-center justify-center"
+                >
+                  {{ selectedHashes.size > 99 ? '99+' : selectedHashes.size }}
+                </span>
+              </button>
+            </div>
 
-            <button @click="handleResume"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
-                    title="开始">
-              <Icon name="play" color="blue" :size="16" />
-            </button>
-            <button @click="handlePause"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
-                    title="暂停">
-              <Icon name="pause" color="gray" :size="16" />
-            </button>
-            <button @click="handleDelete"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-red-50 text-red-600 disabled:opacity-30 disabled:cursor-not-allowed disabled:text-gray-400 transition-all duration-150"
-                    title="删除">
-              <Icon name="trash-2" :size="16" />
-            </button>
-            <div class="w-px h-8 bg-gray-200 mx-2"></div>
-            <!-- 更多操作（选中后可用） -->
-            <button @click="handleRecheckSelected"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
-                    title="重新校验">
-              <Icon name="refresh-cw" :size="16" />
-            </button>
-            <button @click="handleForceStartSelected"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
-                    title="强制开始">
-              <Icon name="zap" :size="16" />
-            </button>
-            <button @click="handleReannounceSelected"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
-                    title="重新汇报">
-              <Icon name="radio" :size="16" />
-            </button>
-            <button @click="handleBatchSpeedLimit"
-                    :disabled="selectedHashes.size === 0"
-                    class="btn p-2 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed transition-all duration-150"
-                    title="批量限速">
-              <Icon name="sliders" :size="16" />
-            </button>
+            <div class="flex items-center gap-1.5 shrink-0 lg:order-3 lg:ml-auto">
+              <!-- 搜索 -->
+              <div class="flex items-center">
+                <div class="relative hidden lg:block lg:w-[clamp(10rem,16vw,14rem)] xl:w-[clamp(12rem,22vw,18rem)]">
+                  <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input v-model="searchQuery" type="text" placeholder="搜索种子名称..." class="input pl-10 py-2" />
+                </div>
+
+                <div ref="searchPopoverRef" class="relative lg:hidden">
+                  <button @click.stop="toggleSearchPopover" class="icon-btn" title="搜索">
+                    <Icon name="search" :size="16" />
+                  </button>
+                  <div
+                    v-if="searchPopoverOpen"
+                    class="absolute right-0 top-full mt-2 bg-white border border-gray-200 shadow-lg rounded-xl z-50 w-[min(92vw,22rem)]"
+                  >
+                    <div class="p-2">
+                      <div class="flex items-center gap-2">
+                        <div class="relative flex-1 min-w-0">
+                          <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input
+                            ref="searchInputRef"
+                            v-model="searchQuery"
+                            type="text"
+                            placeholder="搜索种子名称..."
+                            class="input pl-10 py-2"
+                            @keydown.escape="closeSearchPopover"
+                          />
+                        </div>
+                        <button @click="closeSearchPopover" class="icon-btn" title="关闭搜索">
+                          <Icon name="x" :size="16" />
+                        </button>
+                      </div>
+                      <div class="text-[11px] text-gray-400 mt-2 px-1">
+                        Esc 关闭，点击空白处收起
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 连接状态 -->
+              <div class="hidden sm:flex items-center gap-2 shrink-0" :title="connectionStatus.text">
+                <div
+                  :class="`w-2 h-2 rounded-full ${
+                    connectionStatus.type === 'success' ? 'bg-green-500' :
+                    connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                  }`"
+                ></div>
+                <span class="hidden xl:inline text-xs text-gray-500">{{ connectionStatus.text }}</span>
+              </div>
+
+              <button @click="logout" class="icon-btn" title="退出">
+                <Icon name="log-out" :size="16" />
+              </button>
+            </div>
           </div>
 
-          <!-- 分类/标签管理 -->
-          <div class="w-px h-8 bg-gray-200 mx-2"></div>
-          <button @click="showCategoryManage = true" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150" title="分类管理">
-            <Icon name="folder" :size="16" />
-          </button>
-          <button @click="showTagManage = true" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150" title="标签管理">
-            <Icon name="tag" :size="16" />
-          </button>
-
-          <!-- 列设置 -->
-          <div class="w-px h-8 bg-gray-200 mx-2"></div>
-          <ColumnVisibilityMenu
-            :columns="columns"
-            @toggle-visibility="toggleVisibility"
-            @reset="resetToDefaults"
-          />
-
-          <!-- 全选 -->
-          <button @click="selectAll" class="text-sm text-gray-600 hover:text-gray-900 transition-colors duration-150">
-            {{ selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选' }}
-          </button>
-          <span v-if="selectedHashes.size > 0" class="text-sm text-blue-500 font-medium">
-            已选 {{ selectedHashes.size }} 项
-          </span>
-
-          <!-- 右侧：搜索 + 连接状态 + 退出 -->
-          <div class="flex-1 flex items-center justify-end gap-3">
-            <!-- 搜索框 -->
-            <div class="max-w-md w-64">
-              <div class="relative">
-                <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  v-model="searchQuery"
-                  type="text"
-                  placeholder="搜索种子名称..."
-                  class="input pl-10 py-2"
-                />
-              </div>
-            </div>
-
-            <!-- 连接状态 -->
-            <div class="flex items-center gap-2" :title="connectionStatus.text">
-              <div
-                :class="`w-2 h-2 rounded-full ${
-                  connectionStatus.type === 'success' ? 'bg-green-500' :
-                  connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                }`"
-              ></div>
-              <span class="text-xs text-gray-500">{{ connectionStatus.text }}</span>
-            </div>
-
-            <!-- 退出 -->
-            <button @click="logout" class="btn p-2 text-gray-600 hover:text-gray-900" title="退出">
-              <Icon name="log-out" :size="16" />
+          <!-- 第二排：次要操作（避免第一排过满） -->
+          <div class="flex items-center gap-1.5 overflow-x-auto -mx-3 px-3 sm:-mx-4 sm:px-4 lg:order-2 lg:mx-0 lg:px-0 lg:overflow-visible">
+            <button @click="handleRecheckSelected" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="重新校验">
+              <Icon name="refresh-cw" :size="16" />
             </button>
+            <button @click="handleForceStartSelected" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="强制开始">
+              <Icon name="zap" :size="16" />
+            </button>
+            <button @click="handleReannounceSelected" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="重新汇报">
+              <Icon name="radio" :size="16" />
+            </button>
+            <button @click="handleBatchSpeedLimit" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="批量限速">
+              <Icon name="sliders" :size="16" />
+            </button>
+
+            <div class="hidden md:block toolbar-divider mx-2"></div>
+            <button @click="showCategoryManage = true" class="icon-btn shrink-0" title="分类管理">
+              <Icon name="folder" :size="16" />
+            </button>
+            <button @click="showTagManage = true" class="icon-btn shrink-0" title="标签管理">
+              <Icon name="tag" :size="16" />
+            </button>
+
+            <div class="hidden md:block toolbar-divider mx-2"></div>
+            <div class="hidden md:block">
+              <ColumnVisibilityMenu
+                :columns="columns"
+                @toggle-visibility="toggleVisibility"
+                @reset="resetToDefaults"
+              />
+            </div>
           </div>
         </div>
 
@@ -1034,35 +1088,47 @@ onUnmounted(() => {
         />
 
         <!-- 底部状态栏 -->
-        <div class="border-t border-gray-200 px-4 py-2 text-xs text-gray-500 flex items-center justify-between shrink-0 bg-gray-50">
+        <div class="border-t border-gray-200 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] text-xs text-gray-500 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between shrink-0 bg-gray-50">
           <!-- 左侧：版本号 + 统计信息 -->
-          <div class="flex items-center gap-4">
-            <!-- 版本号 -->
-            <span v-if="backendStore.versionDisplay" class="text-gray-400">{{ backendStore.versionDisplay }}</span>
-            <div v-else class="flex items-center gap-1 text-amber-600">
-              <Icon name="alert-triangle" :size="12" />
-              <span>版本检测失败</span>
+          <div class="flex items-center gap-3 order-2 sm:order-1">
+            <div class="flex items-center gap-x-4 gap-y-1 flex-wrap flex-1 min-w-0">
+              <!-- 版本号 -->
+              <span v-if="backendStore.versionDisplay" class="text-gray-400">{{ backendStore.versionDisplay }}</span>
+              <div v-else class="flex items-center gap-1 text-amber-600">
+                <Icon name="alert-triangle" :size="12" />
+                <span>版本检测失败</span>
+              </div>
+              <div class="w-px h-3 bg-gray-300"></div>
+              <!-- 统计 -->
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                <span class="font-medium text-gray-700">{{ stats.downloading }}</span>
+                <span>下载中</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="w-2 h-2 bg-cyan-500 rounded-full"></div>
+                <span class="font-medium text-gray-700">{{ stats.seeding }}</span>
+                <span>做种中</span>
+              </div>
+              <div class="hidden lg:flex items-center gap-2">
+                <span>总大小</span>
+                <span class="font-mono font-medium text-gray-700">{{ formatBytes(Array.from(torrentStore.torrents.values()).reduce((sum, t) => sum + t.size, 0)) }}</span>
+              </div>
             </div>
-            <div class="w-px h-3 bg-gray-300"></div>
-            <!-- 统计 -->
-            <div class="flex items-center gap-2">
-              <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
-              <span class="font-medium text-gray-700">{{ stats.downloading }}</span>
-              <span>下载中</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <div class="w-2 h-2 bg-cyan-500 rounded-full"></div>
-              <span class="font-medium text-gray-700">{{ stats.seeding }}</span>
-              <span>做种中</span>
-            </div>
-            <div class="hidden lg:flex items-center gap-2">
-              <span>总大小</span>
-              <span class="font-mono font-medium text-gray-700">{{ formatBytes(Array.from(torrentStore.torrents.values()).reduce((sum, t) => sum + t.size, 0)) }}</span>
+
+            <!-- 小屏：把连接状态点放到最右下角（版本信息这行的右侧） -->
+            <div class="sm:hidden flex items-center" :title="connectionStatus.text">
+              <div
+                :class="`w-2 h-2 rounded-full ${
+                  connectionStatus.type === 'success' ? 'bg-green-500' :
+                  connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+                }`"
+              ></div>
             </div>
           </div>
 
           <!-- 右侧：速度（含限速） -->
-          <div class="flex items-center gap-4 font-mono text-xs">
+          <div class="flex items-center gap-4 font-mono text-xs w-full justify-between sm:w-auto sm:justify-end order-1 sm:order-2">
             <div class="flex items-center gap-1">
               <span class="text-gray-500">↓</span>
               <span class="font-medium">{{ formatSpeed(stats.dlSpeed) }}</span>

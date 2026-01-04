@@ -32,6 +32,10 @@ export function useDragResize(options: DragResizeOptions) {
   const startHeight = ref(0)
   const startTransform = ref(0)
 
+  type ResizeMode = 'pointer' | 'mouse' | 'touch' | null
+  let resizeMode: ResizeMode = null
+  let activePointerId: number | null = null
+
   let rafId: number | null = null
   let pendingDeltaY = 0
 
@@ -55,28 +59,44 @@ export function useDragResize(options: DragResizeOptions) {
   /**
    * 开始拖拽
    */
-  function startResize(e: MouseEvent) {
+  function startResize(e: PointerEvent | MouseEvent | TouchEvent) {
+    if (isResizing.value) return
+
     isResizing.value = true
-    startY.value = e.clientY
+    startY.value = 'touches' in e ? (e.touches[0]?.clientY ?? e.changedTouches[0]?.clientY ?? 0) : e.clientY
     startHeight.value = displayHeight.value
     startTransform.value = transformOffset.value
     pendingDeltaY = 0
 
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', stopResize)
-    document.body.style.cursor = 'ns-resize'
+    if (typeof PointerEvent !== 'undefined' && e instanceof PointerEvent) {
+      resizeMode = 'pointer'
+      activePointerId = e.pointerId
+      ;(e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId)
+      document.addEventListener('pointermove', handlePointerMove)
+      document.addEventListener('pointerup', stopResize)
+      document.addEventListener('pointercancel', stopResize)
+      document.body.style.cursor = 'ns-resize'
+    } else if (typeof TouchEvent !== 'undefined' && e instanceof TouchEvent) {
+      resizeMode = 'touch'
+      document.addEventListener('touchmove', handleTouchMove, { passive: false })
+      document.addEventListener('touchend', stopResize)
+      document.addEventListener('touchcancel', stopResize)
+    } else {
+      resizeMode = 'mouse'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', stopResize)
+      document.body.style.cursor = 'ns-resize'
+    }
+
     document.body.style.userSelect = 'none'
     e.preventDefault()
   }
 
-  /**
-   * 处理鼠标移动（RAF 限流）
-   */
-  function handleMouseMove(e: MouseEvent) {
+  function scheduleDelta(clientY: number) {
     if (!isResizing.value) return
 
     // 向上拖拽为正
-    const deltaY = startY.value - e.clientY
+    const deltaY = startY.value - clientY
     pendingDeltaY = deltaY
 
     // 使用 RAF 确保每帧只更新一次
@@ -86,6 +106,25 @@ export function useDragResize(options: DragResizeOptions) {
         rafId = null
       })
     }
+  }
+
+  /**
+   * 处理鼠标移动（RAF 限流）
+   */
+  function handleMouseMove(e: MouseEvent) {
+    scheduleDelta(e.clientY)
+  }
+
+  function handlePointerMove(e: PointerEvent) {
+    if (activePointerId !== null && e.pointerId !== activePointerId) return
+    scheduleDelta(e.clientY)
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    const touch = e.touches[0]
+    if (!touch) return
+    scheduleDelta(touch.clientY)
+    e.preventDefault()
   }
 
   /**
@@ -119,8 +158,21 @@ export function useDragResize(options: DragResizeOptions) {
       rafId = null
     }
 
-    document.removeEventListener('mousemove', handleMouseMove)
-    document.removeEventListener('mouseup', stopResize)
+    if (resizeMode === 'pointer') {
+      document.removeEventListener('pointermove', handlePointerMove)
+      document.removeEventListener('pointerup', stopResize)
+      document.removeEventListener('pointercancel', stopResize)
+      activePointerId = null
+    } else if (resizeMode === 'touch') {
+      document.removeEventListener('touchmove', handleTouchMove)
+      document.removeEventListener('touchend', stopResize)
+      document.removeEventListener('touchcancel', stopResize)
+    } else {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', stopResize)
+    }
+    resizeMode = null
+
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
   }

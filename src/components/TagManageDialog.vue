@@ -64,10 +64,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-white rounded-lg shadow-xl w-[500px] max-h-[80vh] overflow-hidden flex flex-col">
+  <div
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+    @click.self="emit('close')"
+  >
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
       <!-- 标题栏 -->
-      <div class="px-6 py-4 border-b flex items-center justify-between">
+      <div class="px-4 py-3 sm:px-6 sm:py-4 border-b flex items-center justify-between">
         <h2 class="text-lg font-semibold">标签管理</h2>
         <button @click="emit('close')" class="p-1 hover:bg-gray-100 rounded">
           <Icon name="x" :size="16" />
@@ -75,11 +78,11 @@ onMounted(() => {
       </div>
 
       <!-- 内容区 -->
-      <div class="flex-1 overflow-auto p-6">
+      <div class="flex-1 overflow-auto p-4 sm:p-6">
         <!-- 创建表单 -->
         <div class="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 class="text-sm font-medium mb-3">创建标签</h3>
-          <div class="flex gap-3">
+          <div class="flex flex-col sm:flex-row gap-3">
             <input
               v-model="input"
               @keydown.enter="handleCreate"

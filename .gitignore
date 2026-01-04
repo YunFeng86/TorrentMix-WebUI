@@ -9,6 +9,7 @@ lerna-debug.log*
 
 # Package manager stores
 node_modules/
+node_modules.win-bak-*/
 .pnpm-store/
 
 # Build outputs & caches

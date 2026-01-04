@@ -118,10 +118,13 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-    <div class="bg-white rounded-lg shadow-xl w-[600px] max-h-[80vh] overflow-hidden flex flex-col">
+  <div
+    class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+    @click.self="emit('close')"
+  >
+    <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
       <!-- 标题栏 -->
-      <div class="px-6 py-4 border-b flex items-center justify-between">
+      <div class="px-4 py-3 sm:px-6 sm:py-4 border-b flex items-center justify-between">
         <h2 class="text-lg font-semibold">分类管理</h2>
         <button @click="emit('close')" class="p-1 hover:bg-gray-100 rounded">
           <Icon name="x" :size="16" />
@@ -129,13 +132,13 @@ onMounted(() => {
       </div>
 
       <!-- 内容区 -->
-      <div class="flex-1 overflow-auto p-6">
+      <div class="flex-1 overflow-auto p-4 sm:p-6">
         <!-- 创建/编辑表单 -->
         <div class="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 class="text-sm font-medium mb-3">
             {{ editing ? '编辑分类' : '创建分类' }}
           </h3>
-          <div class="flex gap-3">
+          <div class="flex flex-col sm:flex-row gap-3">
             <input
               v-model="form.name"
               type="text"
@@ -188,7 +191,7 @@ onMounted(() => {
           >
             <Icon name="folder" :size="16" class="text-gray-400" />
             <span class="flex-1 font-medium">{{ name }}</span>
-            <span class="text-sm text-gray-500 truncate max-w-[200px]">
+            <span class="text-sm text-gray-500 truncate max-w-[40vw] sm:max-w-[200px]">
               {{ cat.savePath || '默认路径' }}
             </span>
             <button

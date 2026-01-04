@@ -302,8 +302,8 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
   >
     <!-- 顶部拖拽调整条 -->
     <div
-      @mousedown="startResize"
-      class="h-1 bg-gray-200 hover:bg-gray-300 cursor-ns-resize flex-shrink-0 relative group"
+      @pointerdown="startResize"
+      class="h-1 bg-gray-200 hover:bg-gray-300 cursor-ns-resize flex-shrink-0 relative group touch-none select-none"
       :class="{ 'bg-blue-400': isResizing }"
     >
       <div class="absolute inset-x-0 top-0 h-2 -translate-y-1 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
@@ -312,8 +312,8 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
     </div>
 
     <!-- 面板头部 -->
-    <div class="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0">
-      <div class="flex items-center gap-4 flex-1 min-w-0">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 flex-shrink-0">
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 flex-1 min-w-0">
         <!-- 种子基本信息 -->
         <div class="flex items-center gap-3 flex-1 min-w-0">
           <Icon
@@ -323,12 +323,12 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
           />
           <div class="min-w-0 flex-1">
             <h3 class="font-semibold text-gray-900 truncate">{{ torrent?.name || '选择一个种子查看详情' }}</h3>
-            <div v-if="torrent" class="flex items-center gap-4 text-sm text-gray-500 mt-1">
+            <div v-if="torrent" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm text-gray-500 mt-1">
               <span>{{ formatBytes(torrent.size) }}</span>
               <span>进度 {{ (torrent.progress * 100).toFixed(1) }}%</span>
-              <span>比率 {{ torrent.ratio.toFixed(2) }}</span>
+              <span class="hidden sm:inline">比率 {{ torrent.ratio.toFixed(2) }}</span>
               <div
-                class="inline-flex items-center px-2 py-1 rounded text-xs font-medium"
+                class="hidden sm:inline-flex items-center px-2 py-1 rounded text-xs font-medium"
                 :class="getHealthStatus(torrent)"
               >
                 {{ getHealthStatus(torrent).text }}
@@ -338,7 +338,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         </div>
 
         <!-- Tab 切换 -->
-        <nav class="flex gap-1 p-1 bg-gray-100 rounded-lg">
+        <nav class="flex gap-1 p-1 bg-gray-100 rounded-lg overflow-x-auto max-w-full">
           <button
             v-for="tab in [
               { key: 'overview', label: '概览', icon: 'bar-chart-3' },
@@ -349,25 +349,25 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
             :key="tab.key"
             @click="activeTab = tab.key"
             :class="[
-              'flex items-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors',
+              'flex items-center gap-2 px-2 sm:px-3 py-1.5 rounded text-sm font-medium transition-colors whitespace-nowrap',
               activeTab === tab.key
                 ? 'bg-white text-gray-900 shadow-sm'
                 : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
             ]"
           >
             <Icon :name="tab.icon" :size="14" />
-            {{ tab.label }}
+            <span class="hidden sm:inline">{{ tab.label }}</span>
           </button>
         </nav>
       </div>
 
       <!-- 操作按钮 -->
-      <div class="flex items-center gap-2 ml-4">
+      <div class="flex items-center gap-2 sm:ml-4">
         <!-- 暂停/恢复 -->
         <button
           v-if="torrent"
           @click="handleAction(torrent.state === 'paused' ? 'resume' : 'pause')"
-          class="p-2 hover:bg-gray-100 rounded"
+          class="icon-btn"
           :title="torrent.state === 'paused' ? '开始' : '暂停'"
         >
           <Icon :name="torrent.state === 'paused' ? 'play' : 'pause'" :size="16" />
@@ -377,7 +377,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <button
           v-if="torrent"
           @click="handleAction('reannounce')"
-          class="p-2 hover:bg-gray-100 rounded"
+          class="icon-btn"
           title="重新汇报"
         >
           <Icon name="radio" :size="16" />
@@ -387,7 +387,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <button
           v-if="torrent"
           @click="handleAction('recheck')"
-          class="p-2 hover:bg-gray-100 rounded"
+          class="icon-btn"
           title="重新校验"
         >
           <Icon name="refresh-cw" :size="16" />
@@ -397,7 +397,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <button
           v-if="torrent && torrent.state !== 'paused'"
           @click="handleAction('forceStart')"
-          class="p-2 hover:bg-amber-50 text-amber-600 rounded"
+          class="icon-btn text-amber-600 hover:bg-amber-50 hover:border-amber-200"
           title="强制开始"
         >
           <Icon name="zap" :size="16" />
@@ -406,7 +406,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
         <!-- 关闭 -->
         <button
           @click="emit('close')"
-          class="p-2 hover:bg-gray-100 rounded"
+          class="icon-btn"
           title="关闭详情面板"
         >
           <Icon name="x" :size="16" />

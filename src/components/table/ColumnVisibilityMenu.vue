@@ -66,7 +66,7 @@ onUnmounted(() => {
     <!-- 设置按钮 -->
     <button
       @click.stop="toggle"
-      class="btn p-2 hover:bg-gray-100 rounded transition-colors duration-150"
+      class="icon-btn"
       title="列设置"
     >
       <Icon name="settings" :size="16" />
