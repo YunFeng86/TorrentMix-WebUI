@@ -31,10 +31,27 @@ export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: 
   if (version.type === 'qbit') {
     adapter = version.major >= 5 ? new QbitV5Adapter() : new QbitV4Adapter()
   } else {
-    adapter = new TransAdapter()
+    // Transmission: 传递 rpcSemver 用于协议版本检测
+    adapter = new TransAdapter({ rpcSemver: version.rpcSemver })
   }
 
   return { adapter, version }
+}
+
+/**
+ * 根据后端类型创建适配器（不检测版本）
+ * 用于登录前创建适配器实例
+ */
+export async function createAdapterByType(
+  backendType: import('./detect').BackendType
+): Promise<BaseAdapter> {
+  if (backendType === 'qbit' || backendType === 'unknown') {
+    // qBittorrent v4/v5 的 login API 相同，使用 v4 即可
+    return new QbitV4Adapter()
+  } else {
+    // Transmission
+    return new TransAdapter()
+  }
 }
 
 export async function refreshVersion(): Promise<BackendVersion> {
@@ -52,7 +69,7 @@ function loadVersionCache(): CachedVersion | null {
   }
 }
 
-function saveVersionCache(version: BackendVersion): void {
+export function saveVersionCache(version: BackendVersion & { isUnknown?: boolean }): void {
   try {
     const cached: CachedVersion = { ...version, timestamp: Date.now() }
     localStorage.setItem(VERSION_CACHE_KEY, JSON.stringify(cached))

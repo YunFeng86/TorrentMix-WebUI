@@ -3,38 +3,174 @@ import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings }
 import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 
 /**
- * Transmission RPC 请求体
+ * Transmission RPC 方法名映射（json-rpc2 vs legacy）
+ * - json-rpc2: snake_case, method 形如 torrent_get
+ * - legacy: kebab-case, method 形如 torrent-get
  */
-interface TRRequest {
+type TrMethod =
+  | 'session-get'
+  | 'session-set'
+  | 'torrent-get'
+  | 'torrent-set'
+  | 'torrent-set-location'
+  | 'torrent-add'
+  | 'torrent-remove'
+  | 'torrent-start'
+  | 'torrent-start-now'
+  | 'torrent-stop'
+  | 'torrent-verify'
+  | 'torrent-reannounce'
+
+const METHOD_MAP: Record<TrMethod, { jsonrpc2: string; legacy: string }> = {
+  'session-get': { jsonrpc2: 'session_get', legacy: 'session-get' },
+  'session-set': { jsonrpc2: 'session_set', legacy: 'session-set' },
+  'torrent-get': { jsonrpc2: 'torrent_get', legacy: 'torrent-get' },
+  'torrent-set': { jsonrpc2: 'torrent_set', legacy: 'torrent-set' },
+  'torrent-set-location': { jsonrpc2: 'torrent_set_location', legacy: 'torrent-set-location' },
+  'torrent-add': { jsonrpc2: 'torrent_add', legacy: 'torrent-add' },
+  'torrent-remove': { jsonrpc2: 'torrent_remove', legacy: 'torrent-remove' },
+  'torrent-start': { jsonrpc2: 'torrent_start', legacy: 'torrent-start' },
+  'torrent-start-now': { jsonrpc2: 'torrent_start_now', legacy: 'torrent-start-now' },
+  'torrent-stop': { jsonrpc2: 'torrent_stop', legacy: 'torrent-stop' },
+  'torrent-verify': { jsonrpc2: 'torrent_verify', legacy: 'torrent-verify' },
+  'torrent-reannounce': { jsonrpc2: 'torrent_reannounce', legacy: 'torrent-reannounce' },
+}
+
+/**
+ * Transmission RPC 请求体（JSON-RPC 2.0）
+ */
+interface JSONRPC2Request {
+  jsonrpc: '2.0'
+  method: string
+  params?: Record<string, unknown>
+  id: number
+}
+
+interface JSONRPC2Response<T = unknown> {
+  jsonrpc: '2.0'
+  result?: T
+  error?: {
+    code: number
+    message: string
+    data?: { errorString?: string }
+  }
+  id?: number
+}
+
+/**
+ * Transmission RPC 请求体（旧协议）
+ */
+interface LegacyRequest {
   method: string
   arguments?: Record<string, unknown>
   tag?: number
 }
 
 /**
- * Transmission RPC 响应
+ * Transmission RPC 响应（旧协议）
  */
-interface TRResponse {
+interface LegacyResponse<T = unknown> {
   result: 'success' | string
-  arguments?: Record<string, unknown>
+  arguments?: T
   tag?: number
 }
 
+interface TRTrackerStat {
+  announce: string
+  tier: number
+  hasAnnounced?: boolean
+  has_announced?: boolean
+  lastAnnounceSucceeded?: boolean
+  last_announce_succeeded?: boolean
+  lastAnnounceResult?: string
+  last_announce_result?: string
+  lastAnnouncePeerCount?: number
+  last_announce_peer_count?: number
+  announceState?: number
+  announce_state?: number
+  seederCount?: number
+  seeder_count?: number
+  leecherCount?: number
+  leecher_count?: number
+}
+
+interface TRPeer {
+  address: string
+  port: number
+  clientName?: string
+  client_name?: string
+  progress?: number
+  rateToClient?: number
+  rate_to_client?: number
+  rateToPeer?: number
+  rate_to_peer?: number
+}
+
 /**
- * Transmission 种子对象
+ * Transmission 种子对象（字段按需，可同时兼容 json-rpc2/legacy）
  */
 interface TRTorrent {
-  id: number
-  name: string
-  status: number
-  progress: number
-  totalSize: number
-  rateDownload: number
-  rateUpload: number
-  eta: number
-  uploadRatio: number
-  addedDate: number
-  downloadDir: string
+  id?: number
+  hashString?: string
+  hash_string?: string
+  name?: string
+  status?: number
+  error?: number
+  errorString?: string
+  error_string?: string
+  percentDone?: number
+  percent_done?: number
+  totalSize?: number
+  total_size?: number
+  rateDownload?: number
+  rate_download?: number
+  rateUpload?: number
+  rate_upload?: number
+  eta?: number
+  uploadRatio?: number
+  upload_ratio?: number
+  addedDate?: number
+  added_date?: number
+  downloadDir?: string
+  download_dir?: string
+  labels?: string[]
+  downloadedEver?: number
+  downloaded_ever?: number
+  uploadedEver?: number
+  uploaded_ever?: number
+  downloadLimit?: number
+  download_limit?: number
+  downloadLimited?: boolean
+  download_limited?: boolean
+  uploadLimit?: number
+  upload_limit?: number
+  uploadLimited?: boolean
+  upload_limited?: boolean
+  secondsSeeding?: number
+  seconds_seeding?: number
+  doneDate?: number
+  done_date?: number
+  peersConnected?: number
+  peers_connected?: number
+  peersGettingFromUs?: number
+  peers_getting_from_us?: number
+  peersSendingToUs?: number
+  peers_sending_to_us?: number
+  files?: Array<{
+    name: string
+    length: number
+    bytesCompleted?: number
+    bytes_completed?: number
+  }>
+  trackers?: Array<{
+    announce: string
+    tier: number
+  }>
+  trackerStats?: TRTrackerStat[]
+  tracker_stats?: TRTrackerStat[]
+  peers?: TRPeer[]
+  priorities?: number[]
+  wanted?: Array<boolean | 0 | 1>
 }
 
 /**
@@ -49,193 +185,309 @@ interface TRTorrent {
  * TR_STATUS_SEED = 6
  */
 const STATE_MAP: Record<number, TorrentState> = {
-  0: 'paused',      // stopped
-  1: 'queued',      // check wait
-  2: 'checking',    // checking
-  3: 'queued',      // download wait
-  4: 'downloading', // downloading
-  5: 'queued',      // seed wait
-  6: 'seeding'      // seeding
+  0: 'paused',
+  1: 'queued',
+  2: 'checking',
+  3: 'queued',
+  4: 'downloading',
+  5: 'queued',
+  6: 'seeding'
 }
 
 /**
  * Transmission 适配器
  *
  * 实现要点：
- * - id 是数字，需要转换为 string 以匹配 UnifiedTorrent.id
- * - 进度是百分比 (0-100)，需要转换为 (0-1)
+ * - 使用 hash_string/hashString 作为稳定的 id（daemon 重启后不变）
+ * - 支持 JSON-RPC 2.0 (TR 4.1+) 和旧协议 (TR 4.0.x)
  * - 状态用数字枚举，需要映射到 TorrentState
+ * - 进度使用 percent_done/percentDone (0-1)
+ * - 使用 labels 数组，第一个元素作为 category
  */
 export class TransAdapter implements BaseAdapter {
+  private protocolVersion: 'json-rpc2' | 'legacy' = 'legacy'
   private currentMap = new Map<string, UnifiedTorrent>()
 
-  // ========== 全局/备用限速设置 ==========
+  constructor(versionInfo?: { rpcSemver?: string }) {
+    // 根据 rpc-version-semver 判断协议版本
+    if (versionInfo?.rpcSemver) {
+      const semver = versionInfo.rpcSemver.split('.').map(Number)
+      // rpc-version-semver >= 6.0.0 使用 JSON-RPC 2.0
+      this.protocolVersion = (semver[0] ?? 0) >= 6 ? 'json-rpc2' : 'legacy'
+    } else {
+      // 未知版本时优先使用 legacy（兼容面更大；4.1+ 也仍支持 legacy）
+      this.protocolVersion = 'legacy'
+    }
+  }
 
-  async getTransferSettings(): Promise<TransferSettings> {
-    const { data } = await transClient.post<TRResponse>('', { method: 'session-get' })
+  private pick<T>(obj: Record<string, unknown> | undefined, ...keys: string[]): T | undefined {
+    if (!obj) return undefined
+    for (const key of keys) {
+      const value = (obj as any)[key]
+      if (value !== undefined) return value as T
+    }
+    return undefined
+  }
+
+  /**
+   * 封装 RPC 调用，统一处理协议版本和错误
+   */
+  private async rpcCall<T = unknown>(
+    method: TrMethod,
+    params?: Record<string, unknown>
+  ): Promise<T> {
+    if (this.protocolVersion === 'json-rpc2') {
+      const payload: JSONRPC2Request = {
+        jsonrpc: '2.0',
+        method: METHOD_MAP[method].jsonrpc2,
+        params,
+        id: Date.now(),
+      }
+      const { data, status } = await transClient.post<JSONRPC2Response<T>>('', payload)
+      if (status === 204) return undefined as T
+      if (!data) return undefined as T
+      if (data.error) {
+        const extra = data.error.data?.errorString ? `: ${data.error.data.errorString}` : ''
+        throw new Error(`Transmission RPC error(${data.error.code}): ${data.error.message}${extra}`)
+      }
+      return data.result as T
+    }
+
+    const payload: LegacyRequest = {
+      method: METHOD_MAP[method].legacy,
+      arguments: params,
+      tag: Date.now(),
+    }
+
+    const { data } = await transClient.post<LegacyResponse<T>>('', payload)
+
     if (data.result !== 'success') {
       throw new Error(`Transmission RPC error: ${data.result}`)
     }
 
-    const args = data.arguments ?? {}
-    const dlEnabled = Boolean(args['speed-limit-down-enabled'])
-    const ulEnabled = Boolean(args['speed-limit-up-enabled'])
-    const dlKbps = Number(args['speed-limit-down'] ?? 0)
-    const ulKbps = Number(args['speed-limit-up'] ?? 0)
+    return data.arguments as T
+  }
 
-    const altEnabled = Boolean(args['alt-speed-enabled'])
-    const altDlKbps = Number(args['alt-speed-down'] ?? 0)
-    const altUlKbps = Number(args['alt-speed-up'] ?? 0)
+  /**
+   * 归一化：Transmission → UnifiedTorrent
+   */
+  private normalize(raw: TRTorrent): UnifiedTorrent {
+    const hash = this.pick<string>(raw as any, 'hash_string', 'hashString') ?? ''
+    const statusCode = this.pick<number>(raw as any, 'status') ?? -1
+    const errorCode = this.pick<number>(raw as any, 'error') ?? 0
+
+    const state = errorCode !== 0 ? 'error' : (STATE_MAP[statusCode] ?? 'error')
+
+    return {
+      id: hash,
+      name: this.pick<string>(raw as any, 'name') ?? '',
+      state,
+      progress: this.pick<number>(raw as any, 'percent_done', 'percentDone') ?? 0,
+      size: this.pick<number>(raw as any, 'total_size', 'totalSize') ?? 0,
+      dlspeed: this.pick<number>(raw as any, 'rate_download', 'rateDownload') ?? 0,
+      upspeed: this.pick<number>(raw as any, 'rate_upload', 'rateUpload') ?? 0,
+      eta: (() => {
+        const eta = this.pick<number>(raw as any, 'eta') ?? -1
+        return eta === -1 ? -1 : eta
+      })(),
+      ratio: this.pick<number>(raw as any, 'upload_ratio', 'uploadRatio') ?? 0,
+      addedTime: this.pick<number>(raw as any, 'added_date', 'addedDate') ?? 0,
+      savePath: this.pick<string>(raw as any, 'download_dir', 'downloadDir') ?? '',
+      category: raw.labels?.[0] || '',
+      tags: raw.labels || [],
+    }
+  }
+
+  /**
+   * 映射 Tracker 状态
+   */
+  private mapTracker(
+    tracker: { announce: string; tier: number },
+    stat?: TRTrackerStat
+  ): Tracker {
+    let status: Tracker['status'] = 'not_working'
+
+    if (stat) {
+      const announceState = this.pick<number>(stat as any, 'announce_state', 'announceState') ?? 0
+      const hasAnnounced = this.pick<boolean>(stat as any, 'has_announced', 'hasAnnounced') ?? false
+      const lastAnnounceSucceeded = this.pick<boolean>(stat as any, 'last_announce_succeeded', 'lastAnnounceSucceeded') ?? false
+      if (announceState > 0) {
+        status = 'updating'
+      } else if (hasAnnounced && lastAnnounceSucceeded) {
+        status = 'working'
+      }
+    }
+
+    return {
+      url: tracker.announce,
+      status,
+      msg: this.pick<string>(stat as any, 'last_announce_result', 'lastAnnounceResult') || '',
+      peers: this.pick<number>(stat as any, 'last_announce_peer_count', 'lastAnnouncePeerCount') || 0,
+      tier: tracker.tier || 0,
+    }
+  }
+
+  // ========== 全局/备用限速设置 ==========
+
+  async getTransferSettings(): Promise<TransferSettings> {
+    const args = await this.rpcCall<Record<string, unknown>>('session-get')
+
+    const dlEnabled = Boolean(this.pick<boolean>(args, 'speed_limit_down_enabled', 'speed-limit-down-enabled'))
+    const ulEnabled = Boolean(this.pick<boolean>(args, 'speed_limit_up_enabled', 'speed-limit-up-enabled'))
+    const dlKbps = this.pick<number>(args, 'speed_limit_down', 'speed-limit-down') ?? 0
+    const ulKbps = this.pick<number>(args, 'speed_limit_up', 'speed-limit-up') ?? 0
+
+    const altEnabled = Boolean(this.pick<boolean>(args, 'alt_speed_enabled', 'alt-speed-enabled'))
+    const altDlKbps = this.pick<number>(args, 'alt_speed_down', 'alt-speed-down') ?? 0
+    const altUlKbps = this.pick<number>(args, 'alt_speed_up', 'alt-speed-up') ?? 0
 
     return {
       downloadLimit: dlEnabled ? Math.max(0, dlKbps) * 1024 : 0,
       uploadLimit: ulEnabled ? Math.max(0, ulKbps) * 1024 : 0,
       altEnabled,
       altDownloadLimit: Math.max(0, altDlKbps) * 1024,
-      altUploadLimit: Math.max(0, altUlKbps) * 1024
+      altUploadLimit: Math.max(0, altUlKbps) * 1024,
     }
   }
 
   async setTransferSettings(patch: Partial<TransferSettings>): Promise<void> {
     const args: Record<string, unknown> = {}
+    const downEnabledKey = this.protocolVersion === 'json-rpc2' ? 'speed_limit_down_enabled' : 'speed-limit-down-enabled'
+    const downKey = this.protocolVersion === 'json-rpc2' ? 'speed_limit_down' : 'speed-limit-down'
+    const upEnabledKey = this.protocolVersion === 'json-rpc2' ? 'speed_limit_up_enabled' : 'speed-limit-up-enabled'
+    const upKey = this.protocolVersion === 'json-rpc2' ? 'speed_limit_up' : 'speed-limit-up'
+    const altEnabledKey = this.protocolVersion === 'json-rpc2' ? 'alt_speed_enabled' : 'alt-speed-enabled'
+    const altDownKey = this.protocolVersion === 'json-rpc2' ? 'alt_speed_down' : 'alt-speed-down'
+    const altUpKey = this.protocolVersion === 'json-rpc2' ? 'alt_speed_up' : 'alt-speed-up'
 
     if (typeof patch.downloadLimit === 'number') {
       const kbps = Math.max(0, Math.round(patch.downloadLimit / 1024))
-      args['speed-limit-down-enabled'] = kbps > 0
-      args['speed-limit-down'] = kbps
+      args[downEnabledKey] = kbps > 0
+      args[downKey] = kbps
     }
     if (typeof patch.uploadLimit === 'number') {
       const kbps = Math.max(0, Math.round(patch.uploadLimit / 1024))
-      args['speed-limit-up-enabled'] = kbps > 0
-      args['speed-limit-up'] = kbps
+      args[upEnabledKey] = kbps > 0
+      args[upKey] = kbps
     }
-
     if (typeof patch.altEnabled === 'boolean') {
-      args['alt-speed-enabled'] = patch.altEnabled
+      args[altEnabledKey] = patch.altEnabled
     }
     if (typeof patch.altDownloadLimit === 'number') {
-      args['alt-speed-down'] = Math.max(0, Math.round(patch.altDownloadLimit / 1024))
+      args[altDownKey] = Math.max(0, Math.round(patch.altDownloadLimit / 1024))
     }
     if (typeof patch.altUploadLimit === 'number') {
-      args['alt-speed-up'] = Math.max(0, Math.round(patch.altUploadLimit / 1024))
+      args[altUpKey] = Math.max(0, Math.round(patch.altUploadLimit / 1024))
     }
 
     if (Object.keys(args).length === 0) return
 
-    const payload: TRRequest = {
-      method: 'session-set',
-      arguments: args
-    }
-    const { data } = await transClient.post<TRResponse>('', payload)
-    if (data.result !== 'success') {
-      throw new Error(`Transmission RPC error: ${data.result}`)
-    }
+    await this.rpcCall('session-set', args)
+  }
+
+  private buildIds(hashes: string[]): Record<string, unknown> {
+    return hashes.length > 0 ? { ids: hashes } : {}
   }
 
   async fetchList(): Promise<FetchListResult> {
-    const payload: TRRequest = {
-      method: 'torrent-get',
-      arguments: {
-        fields: [
-          'id', 'name', 'status', 'progress',
-          'totalSize', 'rateDownload', 'rateUpload',
-          'eta', 'uploadRatio', 'addedDate', 'downloadDir'
-        ]
-      }
-    }
+    const data = await this.rpcCall<{
+      torrents: TRTorrent[]
+    }>('torrent-get', {
+      fields: this.protocolVersion === 'json-rpc2'
+        ? [
+            'hash_string', 'id', 'name', 'status', 'error', 'error_string',
+            'percent_done', 'total_size',
+            'rate_download', 'rate_upload',
+            'eta', 'upload_ratio',
+            'added_date', 'download_dir',
+            'labels',
+          ]
+        : [
+            'hashString', 'id', 'name', 'status', 'error', 'errorString',
+            'percentDone', 'totalSize',
+            'rateDownload', 'rateUpload',
+            'eta', 'uploadRatio',
+            'addedDate', 'downloadDir',
+            'labels',
+          ],
+    })
 
-    const { data } = await transClient.post<TRResponse>('', payload)
-
-    if (data.result !== 'success') {
-      throw new Error(`Transmission RPC error: ${data.result}`)
-    }
-
-    const torrents = (data.arguments?.torrents as TRTorrent[]) || []
     const map = new Map<string, UnifiedTorrent>()
-
-    for (const torrent of torrents) {
-      map.set(String(torrent.id), this.normalize(torrent))
+    for (const torrent of data.torrents || []) {
+      const hash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
+      if (!hash) continue
+      map.set(hash, this.normalize(torrent))
     }
 
     this.currentMap = map
 
-    // Transmission 不支持分类和标签，返回空值
     return {
       torrents: this.currentMap,
-      categories: new Map(),  // TR 不支持分类
-      tags: [],               // TR 不支持标签（可用 labels 替代，暂不实现）
-      serverState: undefined  // 暂不实现 TR 的 server state
+      categories: new Map(),
+      tags: [],
+      serverState: undefined,
     }
   }
 
   async pause(hashes: string[]): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    const payload: TRRequest = {
-      method: 'torrent-stop',
-      arguments: { ids: ids.length > 0 ? ids : 'all' }
-    }
-    await transClient.post('', payload)
+    await this.rpcCall('torrent-stop', this.buildIds(hashes))
   }
 
   async resume(hashes: string[]): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    const payload: TRRequest = {
-      method: 'torrent-start',
-      arguments: { ids: ids.length > 0 ? ids : 'all' }
-    }
-    await transClient.post('', payload)
+    await this.rpcCall('torrent-start', this.buildIds(hashes))
   }
 
   async delete(hashes: string[], deleteFiles: boolean): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    const payload: TRRequest = {
-      method: 'torrent-remove',
-      arguments: {
-        ids: ids.length > 0 ? ids : 'all',
-        'delete-local-data': deleteFiles
-      }
-    }
-    await transClient.post('', payload)
+    const deleteKey = this.protocolVersion === 'json-rpc2' ? 'delete_local_data' : 'delete-local-data'
+    await this.rpcCall('torrent-remove', {
+      ...this.buildIds(hashes),
+      [deleteKey]: deleteFiles,
+    })
   }
 
   async addTorrent(params: AddTorrentParams): Promise<void> {
-    // Transmission 支持 magnet 和 .torrent 文件（需要 base64 编码）
-    const args: Record<string, unknown> = {}
+    const rpcParams: Record<string, unknown> = {}
+    const downloadDirKey = this.protocolVersion === 'json-rpc2' ? 'download_dir' : 'download-dir'
 
     if (params.paused !== undefined) {
-      args['paused'] = params.paused
+      rpcParams['paused'] = params.paused
     }
     if (params.savepath) {
-      args['download-dir'] = params.savepath
+      rpcParams[downloadDirKey] = params.savepath
     }
 
-    // 处理 magnet 链接
+    const labels = (params.tags || []).map(t => t.trim()).filter(Boolean)
+    const category = params.category?.trim()
+    if (category) {
+      const filtered = labels.filter(t => t !== category)
+      labels.length = 0
+      labels.push(category, ...filtered)
+    }
+    if (labels.length > 0) {
+      rpcParams['labels'] = labels
+    }
+
+    // 处理 URL（magnet 和 HTTP URL 都用 filename 参数）
     if (params.urls?.trim()) {
       const urls = params.urls.trim().split('\n').filter((u: string) => u)
       for (const url of urls) {
-        if (url.startsWith('magnet:')) {
-          args['filename'] = url
-          const payload: TRRequest = {
-            method: 'torrent-add',
-            arguments: args
-          }
-          await transClient.post('', payload)
-        }
+        await this.rpcCall('torrent-add', {
+          ...rpcParams,
+          filename: url,
+        })
       }
     }
 
-    // 处理 .torrent 文件（需要读取并转为 base64）
-    if (params.files && params.files.length > 0) {
+    // 处理 .torrent 文件
+    if (params.files?.length) {
       for (const file of params.files) {
         const arrayBuffer = await file.arrayBuffer()
         const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
-        args['metainfo'] = base64
 
-        const payload: TRRequest = {
-          method: 'torrent-add',
-          arguments: { ...args }
-        }
-        await transClient.post('', payload)
+        await this.rpcCall('torrent-add', {
+          ...rpcParams,
+          metainfo: base64,
+        })
       }
     }
   }
@@ -245,11 +497,7 @@ export class TransAdapter implements BaseAdapter {
     transClient.defaults.auth = { username, password }
 
     // 验证凭证有效性
-    const { data } = await transClient.post<TRResponse>('', { method: 'session-get' })
-    if (data.result !== 'success') {
-      transClient.defaults.auth = undefined
-      throw new Error('认证失败')
-    }
+    await this.rpcCall('session-get')
   }
 
   // 登出
@@ -261,322 +509,354 @@ export class TransAdapter implements BaseAdapter {
   async checkSession(): Promise<boolean> {
     if (!transClient.defaults.auth) return false
     try {
-      const { data } = await transClient.post<TRResponse>('', { method: 'session-get' })
-      return data.result === 'success'
+      await this.rpcCall('session-get')
+      return true
     } catch {
       return false
     }
   }
 
-  /**
-   * 归一化：Transmission → UnifiedTorrent
-   */
-  private normalize(raw: TRTorrent): UnifiedTorrent {
-    return {
-      id: String(raw.id),               // TR 的 id 是数字，转为 string
-      name: raw.name,
-      state: STATE_MAP[raw.status] || 'error',
-      progress: raw.progress / 100,     // TR 是 0-100，转为 0-1
-      size: raw.totalSize,
-      dlspeed: raw.rateDownload,
-      upspeed: raw.rateUpload,
-      eta: raw.eta === -1 ? -1 : raw.eta,  // TR 的 -1 表示无限
-      ratio: raw.uploadRatio,
-      addedTime: raw.addedDate,
-      savePath: raw.downloadDir
-    }
-  }
-
-  // 获取种子详情（Transmission 版本）
+  // 获取种子详情
   async fetchDetail(hash: string): Promise<UnifiedTorrentDetail> {
-    const id = parseInt(hash, 10)
-    const payload: TRRequest = {
-      method: 'torrent-get',
-      arguments: {
-        ids: id,
-        fields: [
-          'hashString', 'name', 'totalSize', 'downloadedEver', 'uploadedEver',
-          'downloadLimit', 'downloadLimited', 'uploadLimit', 'uploadLimited', 'secondsSeeding', 'addedDate', 'doneDate',
-          'downloadDir', 'priority', 'labels',
-          'speedLimitDown', 'speedLimitUp',
-          'peersConnected', 'peersGettingFromUs', 'peersSendingToUs',
-          'files', 'trackers', 'peers'
-        ]
+    const data = await this.rpcCall<{
+      torrents: TRTorrent[]
+    }>('torrent-get', {
+      ids: [hash],
+      fields: this.protocolVersion === 'json-rpc2'
+        ? [
+            'hash_string', 'name',
+            'total_size',
+            'downloaded_ever', 'uploaded_ever',
+            'download_limit', 'download_limited',
+            'upload_limit', 'upload_limited',
+            'seconds_seeding',
+            'added_date', 'done_date',
+            'download_dir',
+            'labels',
+            'peers_connected',
+            'peers_getting_from_us',
+            'peers_sending_to_us',
+            'files',
+            'trackers',
+            'tracker_stats',
+            'peers',
+            'priorities',
+            'wanted',
+          ]
+        : [
+            'hashString', 'name',
+            'totalSize',
+            'downloadedEver', 'uploadedEver',
+            'downloadLimit', 'downloadLimited',
+            'uploadLimit', 'uploadLimited',
+            'secondsSeeding',
+            'addedDate', 'doneDate',
+            'downloadDir',
+            'labels',
+            'peersConnected',
+            'peersGettingFromUs',
+            'peersSendingToUs',
+            'files',
+            'trackers',
+            'trackerStats',
+            'peers',
+            'priorities',
+            'wanted',
+          ],
+    })
+
+    const torrent = data.torrents?.[0]
+    if (!torrent) {
+      throw new Error('Torrent not found')
+    }
+
+    const trackerStats = torrent.tracker_stats || torrent.trackerStats || []
+
+    // 从 tracker_stats 聚合 Swarm 统计
+    let totalSeeds = 0
+    let totalLeechers = 0
+
+    for (const stat of trackerStats) {
+      totalSeeds += this.pick<number>(stat as any, 'seeder_count', 'seederCount') ?? 0
+      totalLeechers += this.pick<number>(stat as any, 'leecher_count', 'leecherCount') ?? 0
+    }
+
+    const files: TorrentFile[] = (torrent.files || []).map((f, idx) => {
+      const priorityNum = torrent.priorities?.[idx] ?? 0
+      const wantedRaw = torrent.wanted?.[idx]
+      const wanted = wantedRaw === undefined ? true : Boolean(wantedRaw)
+
+      let priority: TorrentFile['priority'] = 'normal'
+      if (!wanted) {
+        priority = 'do_not_download'
+      } else if (priorityNum === 1) {
+        priority = 'high'
+      } else if (priorityNum === -1) {
+        priority = 'low'
       }
-    }
 
-    const { data } = await transClient.post<TRResponse>('', payload)
+      const completedBytes = this.pick<number>(f as any, 'bytes_completed', 'bytesCompleted') ?? 0
+      const length = f.length || 0
 
-    const torrents = data.arguments?.torrents as unknown[] | undefined
-    if (data.result !== 'success' || !torrents || torrents.length === 0) {
-      throw new Error(`Failed to fetch torrent details: ${data.result}`)
-    }
+      return {
+        id: idx,
+        name: f.name,
+        size: length,
+        progress: length > 0 ? completedBytes / length : 0,
+        priority,
+      }
+    })
 
-    const torrent = torrents[0] as any
-    const files: TorrentFile[] = (torrent.files || []).map((f: any, idx: number) => ({
-      id: idx,
-      name: f.name,
-      size: f.length,
-      progress: f.bytesCompleted / f.length,
-      priority: 'normal' as const  // TR 的 priority 在 'priority' 字段，简化处理
-    }))
+    const trackers: Tracker[] = (torrent.trackers || []).map((t, i) => {
+      const stat = trackerStats[i]
+      return this.mapTracker(t, stat)
+    })
 
-    const trackers: Tracker[] = (torrent.trackers || []).map((t: any) => ({
-      url: t.announce,
-      status: 'working' as const,  // TR 没有 tracker status 字段，简化处理
-      msg: '',
-      peers: 0,
-      tier: t.tier || 0
-    }))
-
-    const peers: Peer[] = (torrent.peers || []).map((p: any) => ({
+    const peers: Peer[] = (torrent.peers || []).map(p => ({
       ip: p.address,
       port: p.port,
-      client: p.clientName || '',
-      progress: p.progress,
-      dlSpeed: p.rateToClient || 0,
-      upSpeed: p.rateToPeer || 0,
+      client: this.pick<string>(p as any, 'client_name', 'clientName') || '',
+      progress: p.progress || 0,
+      dlSpeed: this.pick<number>(p as any, 'rate_to_client', 'rateToClient') || 0,
+      upSpeed: this.pick<number>(p as any, 'rate_to_peer', 'rateToPeer') || 0,
       downloaded: 0,
-      uploaded: 0
+      uploaded: 0,
     }))
 
-    const dlLimit = torrent.downloadLimited ? (torrent.downloadLimit || 0) * 1024 : -1
-    const upLimit = torrent.uploadLimited ? (torrent.uploadLimit || 0) * 1024 : -1
+    const dlLimited = this.pick<boolean>(torrent as any, 'download_limited', 'downloadLimited') ?? false
+    const dlLimitKb = this.pick<number>(torrent as any, 'download_limit', 'downloadLimit') ?? 0
+    const upLimited = this.pick<boolean>(torrent as any, 'upload_limited', 'uploadLimited') ?? false
+    const upLimitKb = this.pick<number>(torrent as any, 'upload_limit', 'uploadLimit') ?? 0
 
     return {
-      hash: torrent.hashString,
-      name: torrent.name,
-      size: torrent.totalSize,
-      completed: torrent.downloadedEver || 0,
-      uploaded: torrent.uploadedEver || 0,
-      dlLimit,
-      upLimit,
-      seedingTime: torrent.secondsSeeding || 0,
-      addedTime: torrent.addedDate,
-      completionOn: torrent.doneDate || 0,
-      savePath: torrent.downloadDir,
+      hash: this.pick<string>(torrent as any, 'hash_string', 'hashString') || hash,
+      name: torrent.name || '',
+      size: this.pick<number>(torrent as any, 'total_size', 'totalSize') ?? 0,
+      completed: this.pick<number>(torrent as any, 'downloaded_ever', 'downloadedEver') ?? 0,
+      uploaded: this.pick<number>(torrent as any, 'uploaded_ever', 'uploadedEver') ?? 0,
+      dlLimit: dlLimited ? dlLimitKb * 1024 : -1,
+      upLimit: upLimited ? upLimitKb * 1024 : -1,
+      seedingTime: this.pick<number>(torrent as any, 'seconds_seeding', 'secondsSeeding') ?? 0,
+      addedTime: this.pick<number>(torrent as any, 'added_date', 'addedDate') ?? 0,
+      completionOn: this.pick<number>(torrent as any, 'done_date', 'doneDate') ?? 0,
+      savePath: this.pick<string>(torrent as any, 'download_dir', 'downloadDir') ?? '',
       category: torrent.labels?.[0] || '',
       tags: torrent.labels || [],
-      connections: torrent.peersConnected || 0,
-      numSeeds: torrent.peersSendingToUs || 0,
-      numLeechers: torrent.peersGettingFromUs || 0,
+      connections: this.pick<number>(torrent as any, 'peers_connected', 'peersConnected') || 0,
+      numSeeds: totalSeeds,
+      numLeechers: totalLeechers,
+      totalSeeds,
+      totalLeechers,
       files,
       trackers,
-      peers
+      peers,
     }
   }
 
-  // ========== 阶段 3: 新增种子操作 ==========
+  // ========== 种子操作 ==========
 
-  // 重新校验
   async recheck(hash: string): Promise<void> {
-    await this.recheckBatch([hash])
+    await this.rpcCall('torrent-verify', { ids: [hash] })
   }
 
   async recheckBatch(hashes: string[]): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    await transClient.post('', {
-      method: 'torrent-verify',
-      arguments: { ids }
-    })
+    await this.rpcCall('torrent-verify', this.buildIds(hashes))
   }
 
-  // 重新汇报（Transmission: torrent-reannounce）
   async reannounce(hash: string): Promise<void> {
-    await this.reannounceBatch([hash])
+    await this.rpcCall('torrent-reannounce', { ids: [hash] })
   }
 
   async reannounceBatch(hashes: string[]): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    await transClient.post('', {
-      method: 'torrent-reannounce',
-      arguments: { ids }
-    })
+    await this.rpcCall('torrent-reannounce', this.buildIds(hashes))
   }
 
-  // 强制开始/取消强制开始（Transmission 无等价开关：true 用 start-now，false 用普通 start）
   async forceStart(hash: string, value: boolean): Promise<void> {
-    await this.forceStartBatch([hash], value)
+    await this.rpcCall(value ? 'torrent-start-now' : 'torrent-start', { ids: [hash] })
   }
 
   async forceStartBatch(hashes: string[], value: boolean): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    await transClient.post('', {
-      method: value ? 'torrent-start-now' : 'torrent-start',
-      arguments: { ids }
-    })
+    await this.rpcCall(value ? 'torrent-start-now' : 'torrent-start', this.buildIds(hashes))
   }
 
-  // 设置下载限速
   async setDownloadLimit(hash: string, limit: number): Promise<void> {
     await this.setDownloadLimitBatch([hash], limit)
   }
 
   async setDownloadLimitBatch(hashes: string[], limit: number): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
     const limited = limit > 0
     const kbLimit = limited ? Math.max(1, Math.round(limit / 1024)) : 0
-    await transClient.post('', {
-      method: 'torrent-set',
-      arguments: {
-        ids,
-        downloadLimited: limited,
-        downloadLimit: kbLimit
-      }
+    const limitedKey = this.protocolVersion === 'json-rpc2' ? 'download_limited' : 'downloadLimited'
+    const limitKey = this.protocolVersion === 'json-rpc2' ? 'download_limit' : 'downloadLimit'
+    await this.rpcCall('torrent-set', {
+      ...this.buildIds(hashes),
+      [limitedKey]: limited,
+      [limitKey]: kbLimit,
     })
   }
 
-  // 设置上传限速
   async setUploadLimit(hash: string, limit: number): Promise<void> {
     await this.setUploadLimitBatch([hash], limit)
   }
 
   async setUploadLimitBatch(hashes: string[], limit: number): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
     const limited = limit > 0
     const kbLimit = limited ? Math.max(1, Math.round(limit / 1024)) : 0
-    await transClient.post('', {
-      method: 'torrent-set',
-      arguments: {
-        ids,
-        uploadLimited: limited,
-        uploadLimit: kbLimit
-      }
+    const limitedKey = this.protocolVersion === 'json-rpc2' ? 'upload_limited' : 'uploadLimited'
+    const limitKey = this.protocolVersion === 'json-rpc2' ? 'upload_limit' : 'uploadLimit'
+    await this.rpcCall('torrent-set', {
+      ...this.buildIds(hashes),
+      [limitedKey]: limited,
+      [limitKey]: kbLimit,
     })
   }
 
-  // 设置保存位置
   async setLocation(hash: string, location: string): Promise<void> {
-    const id = parseInt(hash, 10)
-    await transClient.post('', {
-      method: 'torrent-set',
-      arguments: {
-        ids: id,
-        'download-dir': location
-      }
+    await this.rpcCall('torrent-set-location', {
+      ids: [hash],
+      location,
+      move: true,
     })
   }
 
-  // 设置分类（Transmission 用 labels 替代）
   async setCategory(hash: string, category: string): Promise<void> {
     await this.setCategoryBatch([hash], category)
   }
 
   async setCategoryBatch(hashes: string[], category: string): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
-    // Transmission 使用 labels
-    if (category) {
-      await transClient.post('', {
-        method: 'torrent-set',
-        arguments: {
-          ids,
-          labels: [category]
-        }
-      })
-    } else {
-      // 清空 labels
-      await transClient.post('', {
-        method: 'torrent-set',
-        arguments: {
-          ids,
-          labels: []
-        }
+    const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
+      ...this.buildIds(hashes),
+      fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
+    })
+
+    // 批量更新：保留其他 labels，只替换第一个
+    for (const torrent of data.torrents || []) {
+      const torrentHash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
+      if (!torrentHash) continue
+
+      const existingLabels = torrent.labels || []
+      const newLabels = category
+        ? [category, ...existingLabels.slice(1)]
+        : existingLabels.slice(1)
+
+      await this.rpcCall('torrent-set', {
+        ids: [torrentHash],
+        labels: newLabels,
       })
     }
   }
 
-  // 设置标签（Transmission 用 labels 替代）
   async setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
     await this.setTagsBatch([hash], tags, mode)
   }
 
   async setTagsBatch(hashes: string[], tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
-    const ids = hashes.map(h => parseInt(h, 10))
+    const sanitized = tags.map(t => t.trim()).filter(Boolean)
 
-    // Transmission 的 labels 操作比较简单，这里只实现 set 模式
-    // add/remove 模式需要先获取现有 labels 再修改，暂不实现
     if (mode === 'set') {
-      await transClient.post('', {
-        method: 'torrent-set',
-        arguments: {
-          ids,
-          labels: tags
-        }
+      await this.rpcCall('torrent-set', { ...this.buildIds(hashes), labels: sanitized })
+      return
+    }
+
+    // add/remove 模式需要先获取当前 labels
+    const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
+      ...this.buildIds(hashes),
+      fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
+    })
+
+    const target = new Set(sanitized)
+
+    for (const torrent of data.torrents || []) {
+      const torrentHash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
+      if (!torrentHash) continue
+
+      const current = new Set(torrent.labels || [])
+
+      const newLabels = mode === 'add'
+        ? Array.from(new Set([...current, ...target]))
+        : Array.from(current).filter(t => !target.has(t))
+
+      await this.rpcCall('torrent-set', {
+        ids: [torrentHash],
+        labels: newLabels,
       })
     }
-    // add/remove 模式暂不支持
   }
 
-  // 设置文件优先级（Transmission 只有 3 级：high/normal/low）
-  async setFilePriority(hash: string, fileIds: number[], priority: 'high' | 'normal' | 'low' | 'do_not_download'): Promise<void> {
-    const id = parseInt(hash, 10)
+  async setFilePriority(
+    hash: string,
+    fileIds: number[],
+    priority: 'high' | 'normal' | 'low' | 'do_not_download'
+  ): Promise<void> {
+    const filesUnwantedKey = this.protocolVersion === 'json-rpc2' ? 'files_unwanted' : 'files-unwanted'
+    const filesWantedKey = this.protocolVersion === 'json-rpc2' ? 'files_wanted' : 'files-wanted'
+    const priorityKey = (value: 'high' | 'normal' | 'low') => {
+      if (this.protocolVersion === 'json-rpc2') return `priority_${value}`
+      return `priority-${value}`
+    }
 
-    // Transmission priority-low: -1, priority-normal: 0, priority-high: 1
-    // do_not_download 通过 'files-unwanted' 实现
-    let priorityField = 'priority-normal'
-    if (priority === 'high') priorityField = 'priority-high'
-    else if (priority === 'low') priorityField = 'priority-low'
-    else if (priority === 'do_not_download') {
-      // 不下载
-      await transClient.post('', {
-        method: 'torrent-set',
-        arguments: {
-          ids: id,
-          'files-unwanted': fileIds
-        }
+    if (priority === 'do_not_download') {
+      await this.rpcCall('torrent-set', {
+        ids: [hash],
+        [filesUnwantedKey]: fileIds,
       })
       return
     }
 
-    // 设置优先级
-    await transClient.post('', {
-      method: 'torrent-set',
-      arguments: {
-        ids: id,
-        [priorityField]: fileIds
-      }
+    // Transmission priority: low=-1, normal=0, high=1
+    await this.rpcCall('torrent-set', {
+      ids: [hash],
+      [filesWantedKey]: fileIds,
+      [priorityKey(priority)]: fileIds,
     })
   }
 
   // ========== 分类管理 ==========
 
   async getCategories(): Promise<Map<string, Category>> {
+    // Transmission 不支持独立的分类管理
     return new Map()
   }
 
   async createCategory(_name: string, _savePath?: string): Promise<void> {
-    // Transmission 不支持创建 labels，抛出错误
     throw new Error('Transmission 不支持创建分类（labels）')
   }
 
   async editCategory(_name: string, _newName?: string, _savePath?: string): Promise<void> {
-    // Transmission 不支持编辑 labels，抛出错误
     throw new Error('Transmission 不支持编辑分类（labels）')
   }
 
   async deleteCategories(..._names: string[]): Promise<void> {
-    // Transmission 不支持删除 labels，抛出错误
     throw new Error('Transmission 不支持删除分类（labels）')
   }
 
   async setCategorySavePath(_category: string, _savePath: string): Promise<void> {
-    // Transmission 不支持设置分类路径，抛出错误
     throw new Error('Transmission 不支持设置分类保存路径')
   }
 
   // ========== 标签管理 ==========
 
   async getTags(): Promise<string[]> {
-    return []
+    // 从所有种子中聚合 labels
+    const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
+      fields: ['labels']
+    })
+
+    const labels = new Set<string>()
+    for (const torrent of data.torrents || []) {
+      for (const label of torrent.labels || []) {
+        labels.add(label)
+      }
+    }
+
+    return Array.from(labels)
   }
 
   async createTags(..._tags: string[]): Promise<void> {
-    // Transmission 不支持创建 labels，抛出错误
-    throw new Error('Transmission 不支持创建标签（labels）')
+    throw new Error('Transmission 不支持预创建标签（labels 随种子自动创建）')
   }
 
   async deleteTags(..._tags: string[]): Promise<void> {
-    // Transmission 不支持删除 labels，抛出错误
-    throw new Error('Transmission 不支持删除标签（labels）')
+    throw new Error('Transmission 不支持删除标签（labels 仅通过 setTags 移除）')
   }
 }

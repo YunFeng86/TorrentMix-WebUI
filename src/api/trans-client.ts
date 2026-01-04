@@ -12,7 +12,7 @@ import axios from 'axios'
 let sessionId = ''
 
 // 开发环境走 Vite 代理，baseURL 留空
-const baseURL = import.meta.env.DEV ? '' : (import.meta.env.VITE_TR_URL || 'http://localhost:9091/transmission/rpc')
+const baseURL = import.meta.env.DEV ? '/transmission/rpc' : (import.meta.env.VITE_TR_URL || 'http://localhost:9091/transmission/rpc')
 
 export const transClient = axios.create({
   baseURL,

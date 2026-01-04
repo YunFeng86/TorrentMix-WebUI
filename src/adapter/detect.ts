@@ -143,31 +143,27 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
 
   // 尝试 Transmission
   try {
-    const res = await silentApiClient.post('/transmission/rpc', { method: 'session-get' }, {
-      validateStatus: () => true,
-      headers: { 'Content-Type': 'application/json' }
-    })
+    const { transClient } = await import('@/api/trans-client')
+    const res = await transClient.post('', { method: 'session-get' })
 
-    if (res.status === 409 || res.status === 200) {
-      let version = 'unknown'
-      let rpcSemver: string | undefined
+    let version = 'unknown'
+    let rpcSemver: string | undefined
 
-      if (res.status === 200 && res.data?.arguments) {
-        version = res.data.arguments.version || 'unknown'
-        rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
-      }
-
-      const parsed = parseVersion(version)
-      const isUnknown = res.status === 409 || version === 'unknown'
-
-      return {
-        type: 'trans',
-        version,
-        ...parsed,
-        rpcSemver,
-        isUnknown
-      } as BackendVersion & { isUnknown?: boolean }
+    if (res.data?.arguments) {
+      version = res.data.arguments.version || 'unknown'
+      rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
     }
+
+    const parsed = parseVersion(version)
+    const isUnknown = version === 'unknown'
+
+    return {
+      type: 'trans',
+      version,
+      ...parsed,
+      rpcSemver,
+      isUnknown
+    } as BackendVersion & { isUnknown?: boolean }
   } catch {}
 
   // 保守策略：检测失败返回 qBittorrent v4

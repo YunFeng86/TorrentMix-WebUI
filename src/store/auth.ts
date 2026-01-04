@@ -16,41 +16,55 @@ export const useAuthStore = defineStore('auth', () => {
       const backendType = await detectBackendTypeOnly()
       console.log('[Login] Backend type:', backendType)
 
-      // 第二步：根据后端类型创建临时适配器并登录
-      let tempAdapter: import('@/adapter/interface').BaseAdapter
+      // 第二步：使用 factory 模式创建初始适配器
+      const { createAdapterByType, saveVersionCache, clearVersionCache } = await import('@/adapter/factory')
+      const adapter = await createAdapterByType(backendType)
+      console.log('[Login] Initial adapter created')
 
-      if (backendType === 'qbit') {
-        // qBittorrent v4/v5 的 login API 相同，使用 v4 即可
-        const { QbitV4Adapter } = await import('@/adapter/qbit/v4')
-        tempAdapter = new QbitV4Adapter()
-      } else {
-        // Transmission
-        const { TransAdapter } = await import('@/adapter/trans/index')
-        tempAdapter = new TransAdapter()
-      }
-
+      // 第三步：使用初始适配器登录
       console.log('[Login] Calling login API...')
-      await tempAdapter.login(username, password)
+      await adapter.login(username, password)
       console.log('[Login] Login successful')
 
-      // 第三步：登录成功后，使用携带凭证的检测函数获取真实版本
-      const { createAdapter, clearVersionCache } = await import('@/adapter/factory')
+      // 第四步：登录后检测版本（只检测一次）
       const { detectBackendWithVersionAuth } = await import('@/adapter/detect')
-
-      clearVersionCache()  // 清除旧的版本缓存
       console.log('[Login] Detecting version with auth...')
 
-      // 使用认证版本的检测函数，携带 cookie 获取真实版本号
       const versionInfo = await detectBackendWithVersionAuth() as import('@/adapter/detect').BackendVersion & { isUnknown?: boolean }
       console.log('[Login] Version info:', versionInfo)
 
       // 如果仍然是未知版本，使用默认版本
-      const finalVersion = versionInfo.isUnknown
-        ? { type: backendType, version: 'unknown', major: backendType === 'qbit' ? 4 : 0, minor: 0, patch: 0 }
+      const finalVersion: (import('@/adapter/detect').BackendVersion & { isUnknown?: boolean }) = versionInfo.isUnknown
+        ? { type: backendType, version: 'unknown', major: backendType === 'qbit' ? 4 : 0, minor: 0, patch: 0, isUnknown: true }
         : versionInfo
 
-      // 第四步：创建最终的适配器
-      const { adapter: finalAdapter } = await createAdapter()
+      // 第五步：缓存版本信息（未知版本不缓存，避免污染缓存）
+      if (finalVersion.isUnknown) {
+        clearVersionCache()
+      } else {
+        saveVersionCache(finalVersion)
+      }
+
+      // 第六步：智能复用或升级适配器
+      let finalAdapter: import('@/adapter/interface').BaseAdapter
+      const needsQbitUpgrade = finalVersion.type === 'qbit' && finalVersion.major >= 5
+      const needsTransRecreate = finalVersion.type === 'trans' && Boolean(finalVersion.rpcSemver)
+
+      if (needsQbitUpgrade) {
+        // 需要 v5 适配器，创建新实例
+        console.log('[Login] Upgrading to v5 adapter')
+        const { QbitV5Adapter } = await import('@/adapter/qbit/v5')
+        finalAdapter = new QbitV5Adapter()
+      } else if (needsTransRecreate) {
+        console.log('[Login] Recreating Transmission adapter with protocol info')
+        const { TransAdapter } = await import('@/adapter/trans/index')
+        finalAdapter = new TransAdapter({ rpcSemver: finalVersion.rpcSemver })
+      } else {
+        // 复用初始适配器（大部分情况）
+        console.log('[Login] Reusing initial adapter')
+        finalAdapter = adapter
+      }
+
       backendStore.setAdapter(finalAdapter, finalVersion)
       isAuthenticated.value = true
       console.log('[Login] Setup complete, version:', finalVersion)
