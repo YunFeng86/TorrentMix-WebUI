@@ -35,6 +35,21 @@ export interface AddTorrentParams {
 }
 
 /**
+ * 传输设置（用于 qB/TR 的全局限速与备用限速）
+ *
+ * 约定：
+ * - 所有速度单位为 bytes/s
+ * - 0 表示不限制
+ */
+export interface TransferSettings {
+  downloadLimit: number
+  uploadLimit: number
+  altEnabled: boolean
+  altDownloadLimit: number
+  altUploadLimit: number
+}
+
+/**
  * BaseAdapter 接口 - 定义所有后端适配器必须实现的方法
  *
  * 设计原则：
@@ -265,4 +280,16 @@ export interface BaseAdapter {
    * @param tags - 标签数组
    */
   deleteTags(...tags: string[]): Promise<void>
+
+  // ========== 全局/备用限速设置 ==========
+
+  /**
+   * 获取后端传输设置
+   */
+  getTransferSettings(): Promise<TransferSettings>
+
+  /**
+   * 更新后端传输设置（部分字段）
+   */
+  setTransferSettings(patch: Partial<TransferSettings>): Promise<void>
 }

@@ -5,7 +5,7 @@ import type {
   UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
   QBTorrentProperties, QBFile, QBTracker, QBPeer
 } from '../types'
-import type { BaseAdapter, AddTorrentParams, FetchListResult } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings } from '../interface'
 
 const STATE_MAP: Record<string, TorrentState> = {
   downloading: 'downloading',
@@ -452,6 +452,38 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     await apiClient.post('/api/v2/torrents/deleteTags', null, {
       params: { tags: tags.join(',') }
     })
+  }
+
+  // ========== 全局/备用限速设置 ==========
+
+  async getTransferSettings(): Promise<TransferSettings> {
+    const res = await apiClient.get<QBSyncResponse>('/api/v2/sync/maindata', { params: { rid: 0 } })
+    const state = res.data.server_state
+    return {
+      downloadLimit: (state.dl_rate_limit as number) ?? 0,
+      uploadLimit: (state.up_rate_limit as number) ?? 0,
+      altEnabled: (state.use_alt_speed as boolean) ?? false,
+      altDownloadLimit: (state.alt_dl_limit as number) ?? 0,
+      altUploadLimit: (state.alt_up_limit as number) ?? 0
+    }
+  }
+
+  async setTransferSettings(patch: Partial<TransferSettings>): Promise<void> {
+    if (typeof patch.downloadLimit === 'number') {
+      await apiClient.post('/api/v2/transfer/setDownloadLimit', null, { params: { limit: patch.downloadLimit } })
+    }
+    if (typeof patch.uploadLimit === 'number') {
+      await apiClient.post('/api/v2/transfer/setUploadLimit', null, { params: { limit: patch.uploadLimit } })
+    }
+    if (typeof patch.altEnabled === 'boolean') {
+      await apiClient.post('/api/v2/transfer/setSpeedLimitsMode', null, { params: { mode: patch.altEnabled ? 1 : 0 } })
+    }
+    if (typeof patch.altDownloadLimit === 'number' || typeof patch.altUploadLimit === 'number') {
+      const current = await this.getTransferSettings()
+      const downloadLimit = typeof patch.altDownloadLimit === 'number' ? patch.altDownloadLimit : current.altDownloadLimit
+      const uploadLimit = typeof patch.altUploadLimit === 'number' ? patch.altUploadLimit : current.altUploadLimit
+      await apiClient.post('/api/v2/transfer/setAlternativeSpeedLimits', null, { params: { downloadLimit, uploadLimit } })
+    }
   }
 
   protected normalizeServerState(raw: unknown): ServerState | undefined {

@@ -72,6 +72,11 @@
     @apply disabled:opacity-50 disabled:cursor-not-allowed;
   }
 
+  .icon-btn-in-group {
+    @apply border-0 bg-transparent;
+    @apply hover:bg-white;
+  }
+
   .icon-btn-primary {
     @apply bg-black text-white border-black;
     @apply hover:bg-gray-800 hover:border-gray-800;
@@ -84,6 +89,14 @@
 
   .toolbar-divider {
     @apply w-px h-8 bg-gray-200;
+  }
+
+  .toolbar-group {
+    @apply inline-flex items-center gap-0 rounded-xl bg-gray-50/80 p-1;
+  }
+
+  .toolbar-group-sep {
+    @apply w-px h-4 bg-gray-200 mx-1 self-center;
   }
   
   .btn-primary {

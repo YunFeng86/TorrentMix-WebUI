@@ -17,7 +17,9 @@ import AddTorrentDialog from '@/components/AddTorrentDialog.vue'
 import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
 import TorrentBottomPanel from '@/components/TorrentBottomPanel.vue'
 import ResizableTableHeader from '@/components/table/ResizableTableHeader.vue'
-import ColumnVisibilityMenu from '@/components/table/ColumnVisibilityMenu.vue'
+import OverflowActionBar, { type OverflowActionItem } from '@/components/toolbar/OverflowActionBar.vue'
+import ColumnSettingsDialog from '@/components/ColumnSettingsDialog.vue'
+import BackendSettingsDialog from '@/components/BackendSettingsDialog.vue'
 import CategoryManageDialog from '@/components/CategoryManageDialog.vue'
 import TagManageDialog from '@/components/TagManageDialog.vue'
 import Icon from '@/components/Icon.vue'
@@ -44,6 +46,7 @@ const searchQuery = ref('')
 const debouncedSearchQuery = ref('')  // 用于过滤的实际搜索词（防抖后）
 const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
+const windowWidth = ref(window.innerWidth)
 const tableScrollRef = ref<HTMLElement | null>(null)
 
 // 表格列宽调整与可见性控制
@@ -71,6 +74,8 @@ const addError = ref('')
 // 分类/标签管理对话框
 const showCategoryManage = ref(false)
 const showTagManage = ref(false)
+const showColumnSettings = ref(false)
+const showBackendSettings = ref(false)
 
 // 窄屏搜索：折叠为按钮，使用下拉 popover 展开
 const searchPopoverOpen = ref(false)
@@ -220,6 +225,7 @@ function selectTorrentByIndex(index: number) {
 
 // 监听屏幕尺寸变化
 const handleResize = () => {
+  windowWidth.value = window.innerWidth
   isMobile.value = window.innerWidth < 768
   // 移动端自动折叠侧边栏
   if (isMobile.value) {
@@ -227,7 +233,7 @@ const handleResize = () => {
   }
 
   // 回到较宽屏幕后收起窄屏 popover
-  if (window.innerWidth >= 1024) {
+  if (window.innerWidth >= 1120) {
     searchPopoverOpen.value = false
   }
 }
@@ -419,6 +425,104 @@ const sortedTorrents = computed(() => {
 // 是否使用虚拟滚动（超过阈值时启用）
 const useVirtualScroll = computed(() => sortedTorrents.value.length >= VIRTUAL_SCROLL_THRESHOLD)
 
+const selectedBadge = computed<string | undefined>(() => {
+  const count = selectedHashes.value.size
+  if (count <= 0) return undefined
+  return count > 99 ? '99+' : String(count)
+})
+
+const isAllSelected = computed(() => {
+  const total = sortedTorrents.value.length
+  return total > 0 && selectedHashes.value.size === total
+})
+
+function handleToolbarAction(actionId: string) {
+  switch (actionId) {
+    case 'filter':
+      sidebarCollapsed.value = false
+      break
+    case 'add':
+      showAddDialog.value = true
+      break
+    case 'resume':
+      void handleResume()
+      break
+    case 'pause':
+      void handlePause()
+      break
+    case 'delete':
+      void handleDelete()
+      break
+    case 'selectAll':
+      selectAll()
+      break
+    case 'recheckSelected':
+      void handleRecheckSelected()
+      break
+    case 'forceStartSelected':
+      void handleForceStartSelected()
+      break
+    case 'reannounceSelected':
+      void handleReannounceSelected()
+      break
+    case 'batchSpeedLimit':
+      void handleBatchSpeedLimit()
+      break
+    case 'categoryManage':
+      showCategoryManage.value = true
+      break
+    case 'tagManage':
+      showTagManage.value = true
+      break
+    case 'columns':
+      showColumnSettings.value = true
+      break
+    case 'backendSettings':
+      showBackendSettings.value = true
+      break
+  }
+}
+
+const toolbarPrimaryItems = computed<OverflowActionItem[]>(() => [
+  { id: 'filter', title: '筛选', icon: 'panel-left', show: isMobile.value, pinned: true, priority: 0, group: 'main', groupLabel: '操作' },
+  { id: 'add', title: '添加种子', icon: 'plus', variant: 'primary', pinned: true, priority: 0, group: 'main', groupLabel: '操作' },
+  { id: 'resume', title: '开始', icon: 'play', color: 'blue', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
+  { id: 'pause', title: '暂停', icon: 'pause', color: 'gray', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
+  { id: 'delete', title: '删除', icon: 'trash-2', variant: 'danger', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
+])
+
+const toolbarBatchItems = computed<OverflowActionItem[]>(() => [
+  { id: 'recheckSelected', title: '重新校验', icon: 'refresh-cw', disabled: selectedHashes.value.size === 0, pinned: true, priority: 0, group: 'batch', groupLabel: '批量' },
+  { id: 'reannounceSelected', title: '重新汇报', icon: 'radio', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'batch', groupLabel: '批量' },
+  { id: 'forceStartSelected', title: '强制开始', icon: 'zap', disabled: selectedHashes.value.size === 0, pinned: true, priority: 2, group: 'batch', groupLabel: '批量' },
+  { id: 'batchSpeedLimit', title: '批量限速', icon: 'sliders', disabled: selectedHashes.value.size === 0, pinned: true, priority: 3, group: 'batch', groupLabel: '批量' },
+])
+
+const toolbarSelectItems = computed<OverflowActionItem[]>(() => [
+  { id: 'selectAll', title: isAllSelected.value ? '取消全选' : '全选', icon: isAllSelected.value ? 'square-x' : 'square-check', badge: selectedBadge.value, pinned: true, priority: 0, group: 'select', groupLabel: '选择' },
+])
+
+const toolbarManageItems = computed<OverflowActionItem[]>(() => [
+  { id: 'columns', title: '列设置', icon: 'columns-3', pinned: false, priority: 10, group: 'manage', groupLabel: '管理' },
+  { id: 'categoryManage', title: '分类管理', icon: 'folder', show: backendStore.isQbit, pinned: false, priority: 11, group: 'manage', groupLabel: '管理' },
+  { id: 'tagManage', title: '标签管理', icon: 'tag', show: backendStore.isQbit, pinned: false, priority: 12, group: 'manage', groupLabel: '管理' },
+  { id: 'backendSettings', title: '设置', icon: 'settings', pinned: false, priority: 13, group: 'manage', groupLabel: '管理' },
+])
+
+const toolbarSingleRowLeftItems = computed<OverflowActionItem[]>(() => [
+  ...toolbarPrimaryItems.value,
+  ...toolbarBatchItems.value,
+  ...toolbarSelectItems.value,
+])
+const toolbarTwoRowTopItems = computed<OverflowActionItem[]>(() => [
+  ...toolbarPrimaryItems.value,
+  ...toolbarSelectItems.value,
+])
+
+// 渐进式：先在一排内收缩搜索/状态，最后再把“批量+管理”移到第二排
+const showSearchInput = computed(() => windowWidth.value >= 1120)
+const useTwoRowToolbar = computed(() => windowWidth.value < 960)
+
 // 立即刷新函数（操作后调用）
 async function immediateRefresh() {
   try {
@@ -480,6 +584,15 @@ const connectionStatus = computed(() => {
   }
   return { text: '已连接', type: 'success' as const, icon: 'connected' }
 })
+
+const connectionLabel = computed(() => {
+  if (windowWidth.value >= 1400) return connectionStatus.value.text
+  if (connectionStatus.value.type === 'success') return '已连'
+  if (connectionStatus.value.type === 'warning') return '异常'
+  return '断开'
+})
+
+const showToolbarConnection = computed(() => showSearchInput.value && !useTwoRowToolbar.value)
 
 function toggleSelect(hash: string) {
   if (selectedHashes.value.has(hash)) {
@@ -847,52 +960,34 @@ onUnmounted(() => {
       <!-- 右侧主内容 -->
       <main class="flex-1 flex flex-col overflow-hidden bg-white">
         <!-- 工具栏 -->
-        <div class="border-b border-gray-200 px-3 py-2 sm:px-4 sm:py-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:gap-4 shrink-0">
-          <!-- 第一排：主操作 + 搜索/状态/退出（窄屏更均衡） -->
-          <div class="flex items-center gap-2 w-full min-w-0 lg:contents">
-            <div class="flex items-center gap-1.5 overflow-x-auto -mx-3 px-3 sm:-mx-4 sm:px-4 flex-1 min-w-0 lg:order-1 lg:mx-0 lg:px-0 lg:overflow-visible lg:flex-none">
-              <button v-if="isMobile" @click="sidebarCollapsed = false" class="icon-btn shrink-0" title="筛选">
-                <Icon name="panel-left" :size="16" />
-              </button>
-              <button @click="showAddDialog = true" class="icon-btn icon-btn-primary shrink-0" title="添加种子">
-                <Icon name="plus" :size="16" />
-              </button>
-              <button @click="handleResume" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="开始">
-                <Icon name="play" color="blue" :size="16" />
-              </button>
-              <button @click="handlePause" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="暂停">
-                <Icon name="pause" color="gray" :size="16" />
-              </button>
-              <button @click="handleDelete" :disabled="selectedHashes.size === 0" class="icon-btn icon-btn-danger shrink-0 disabled:text-gray-400" title="删除">
-                <Icon name="trash-2" :size="16" />
-              </button>
-              <button
-                @click="selectAll"
-                class="icon-btn shrink-0 relative"
-                :title="selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? '取消全选' : '全选'"
-              >
-                <Icon
-                  :name="selectedHashes.size === sortedTorrents.length && sortedTorrents.length > 0 ? 'square-x' : 'square-check'"
-                  :size="16"
-                />
-                <span
-                  v-if="selectedHashes.size > 0"
-                  class="absolute -top-1 -right-1 bg-blue-600 text-white text-[10px] leading-none rounded-full min-w-4 h-4 px-1 flex items-center justify-center"
-                >
-                  {{ selectedHashes.size > 99 ? '99+' : selectedHashes.size }}
-                </span>
-              </button>
-            </div>
+        <div class="border-b border-gray-200 px-3 py-2 sm:px-4 sm:py-3 flex flex-col gap-2 shrink-0">
+          <!-- 单排：能放下时尽量一排 -->
+          <div v-if="!useTwoRowToolbar" class="flex items-center gap-2 w-full min-w-0">
+            <OverflowActionBar
+              class="flex-1 min-w-0"
+              :items="toolbarSingleRowLeftItems"
+              overflow-title="更多操作"
+              grouped
+              @action="handleToolbarAction"
+            />
 
-            <div class="flex items-center gap-1.5 shrink-0 lg:order-3 lg:ml-auto">
+            <div class="flex items-center gap-2 min-w-0">
+              <OverflowActionBar
+                class="min-w-0"
+                :items="toolbarManageItems"
+                overflow-title="更多管理"
+                grouped
+                @action="handleToolbarAction"
+              />
+
               <!-- 搜索 -->
               <div class="flex items-center">
-                <div class="relative hidden lg:block lg:w-[clamp(10rem,16vw,14rem)] xl:w-[clamp(12rem,22vw,18rem)]">
+                <div v-if="showSearchInput" class="relative w-[clamp(9rem,14vw,14rem)] min-w-0">
                   <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input v-model="searchQuery" type="text" placeholder="搜索种子名称..." class="input pl-10 py-2" />
                 </div>
 
-                <div ref="searchPopoverRef" class="relative lg:hidden">
+                <div v-else ref="searchPopoverRef" class="relative">
                   <button @click.stop="toggleSearchPopover" class="icon-btn" title="搜索">
                     <Icon name="search" :size="16" />
                   </button>
@@ -926,14 +1021,14 @@ onUnmounted(() => {
               </div>
 
               <!-- 连接状态 -->
-              <div class="hidden sm:flex items-center gap-2 shrink-0" :title="connectionStatus.text">
+              <div v-if="showToolbarConnection" class="flex items-center gap-2 shrink-0" :title="connectionStatus.text">
                 <div
                   :class="`w-2 h-2 rounded-full ${
                     connectionStatus.type === 'success' ? 'bg-green-500' :
                     connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
                   }`"
                 ></div>
-                <span class="hidden xl:inline text-xs text-gray-500">{{ connectionStatus.text }}</span>
+                <span class="text-xs text-gray-500 max-w-[5rem] truncate">{{ connectionLabel }}</span>
               </div>
 
               <button @click="logout" class="icon-btn" title="退出">
@@ -942,38 +1037,78 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 第二排：次要操作（避免第一排过满） -->
-          <div class="flex items-center gap-1.5 overflow-x-auto -mx-3 px-3 sm:-mx-4 sm:px-4 lg:order-2 lg:mx-0 lg:px-0 lg:overflow-visible">
-            <button @click="handleRecheckSelected" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="重新校验">
-              <Icon name="refresh-cw" :size="16" />
-            </button>
-            <button @click="handleForceStartSelected" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="强制开始">
-              <Icon name="zap" :size="16" />
-            </button>
-            <button @click="handleReannounceSelected" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="重新汇报">
-              <Icon name="radio" :size="16" />
-            </button>
-            <button @click="handleBatchSpeedLimit" :disabled="selectedHashes.size === 0" class="icon-btn shrink-0" title="批量限速">
-              <Icon name="sliders" :size="16" />
-            </button>
+          <!-- 双排：批量 + 管理下移 -->
+          <template v-else>
+            <!-- 第一排：主操作 + 搜索/状态/退出 -->
+            <div class="flex items-center gap-2 w-full min-w-0">
+              <OverflowActionBar
+                class="flex-1 min-w-0"
+                :items="toolbarTwoRowTopItems"
+                overflow-title="更多操作"
+                grouped
+                @action="handleToolbarAction"
+              />
 
-            <div class="hidden md:block toolbar-divider mx-2"></div>
-            <button @click="showCategoryManage = true" class="icon-btn shrink-0" title="分类管理">
-              <Icon name="folder" :size="16" />
-            </button>
-            <button @click="showTagManage = true" class="icon-btn shrink-0" title="标签管理">
-              <Icon name="tag" :size="16" />
-            </button>
+              <div class="flex items-center gap-2 shrink-0">
+                <!-- 搜索 -->
+                <div class="flex items-center">
+                  <div ref="searchPopoverRef" class="relative">
+                    <button @click.stop="toggleSearchPopover" class="icon-btn" title="搜索">
+                      <Icon name="search" :size="16" />
+                    </button>
+                    <div
+                      v-if="searchPopoverOpen"
+                      class="absolute right-0 top-full mt-2 bg-white border border-gray-200 shadow-lg rounded-xl z-50 w-[min(92vw,22rem)]"
+                    >
+                      <div class="p-2">
+                        <div class="flex items-center gap-2">
+                          <div class="relative flex-1 min-w-0">
+                            <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                            <input
+                              ref="searchInputRef"
+                              v-model="searchQuery"
+                              type="text"
+                              placeholder="搜索种子名称..."
+                              class="input pl-10 py-2"
+                              @keydown.escape="closeSearchPopover"
+                            />
+                          </div>
+                          <button @click="closeSearchPopover" class="icon-btn" title="关闭搜索">
+                            <Icon name="x" :size="16" />
+                          </button>
+                        </div>
+                        <div class="text-[11px] text-gray-400 mt-2 px-1">
+                          Esc 关闭，点击空白处收起
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
 
-            <div class="hidden md:block toolbar-divider mx-2"></div>
-            <div class="hidden md:block">
-              <ColumnVisibilityMenu
-                :columns="columns"
-                @toggle-visibility="toggleVisibility"
-                @reset="resetToDefaults"
+                <button @click="logout" class="icon-btn" title="退出">
+                  <Icon name="log-out" :size="16" />
+                </button>
+              </div>
+            </div>
+
+            <!-- 第二排：批量 + 管理 -->
+            <div class="flex items-center gap-2 w-full min-w-0">
+              <OverflowActionBar
+                class="flex-1 min-w-0"
+                :items="toolbarBatchItems"
+                overflow-title="更多操作"
+                grouped
+                @action="handleToolbarAction"
+              />
+              <OverflowActionBar
+                class="ml-auto flex-initial min-w-0"
+                :items="toolbarManageItems"
+                overflow-title="更多管理"
+                grouped
+                @action="handleToolbarAction"
               />
             </div>
-          </div>
+          </template>
         </div>
 
         <!-- 种子列表容器：flex-1 自动填充剩余空间 -->
@@ -1088,7 +1223,7 @@ onUnmounted(() => {
         />
 
         <!-- 底部状态栏 -->
-        <div class="border-t border-gray-200 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] text-xs text-gray-500 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between shrink-0 bg-gray-50">
+        <div class="relative border-t border-gray-200 px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.5rem)] text-xs text-gray-500 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between shrink-0 bg-gray-50">
           <!-- 左侧：版本号 + 统计信息 -->
           <div class="flex items-center gap-3 order-2 sm:order-1">
             <div class="flex items-center gap-x-4 gap-y-1 flex-wrap flex-1 min-w-0">
@@ -1116,15 +1251,6 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- 小屏：把连接状态点放到最右下角（版本信息这行的右侧） -->
-            <div class="sm:hidden flex items-center" :title="connectionStatus.text">
-              <div
-                :class="`w-2 h-2 rounded-full ${
-                  connectionStatus.type === 'success' ? 'bg-green-500' :
-                  connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
-                }`"
-              ></div>
-            </div>
           </div>
 
           <!-- 右侧：速度（含限速） -->
@@ -1155,6 +1281,16 @@ onUnmounted(() => {
               <span>ALT</span>
             </div>
           </div>
+
+          <!-- 连接状态点：固定右下角（顶部不显示时） -->
+          <div v-if="!showToolbarConnection" class="absolute right-4 bottom-2" :title="connectionStatus.text">
+            <div
+              :class="`w-2 h-2 rounded-full ${
+                connectionStatus.type === 'success' ? 'bg-green-500' :
+                connectionStatus.type === 'warning' ? 'bg-yellow-500 animate-pulse' : 'bg-red-500'
+              }`"
+            ></div>
+          </div>
         </div>
       </main>
     </div>
@@ -1164,6 +1300,21 @@ onUnmounted(() => {
       :open="showAddDialog"
       @close="showAddDialog = false"
       @add="handleAddTorrent"
+    />
+
+    <!-- 列设置对话框 -->
+    <ColumnSettingsDialog
+      :open="showColumnSettings"
+      :columns="columns"
+      @close="showColumnSettings = false"
+      @toggle-visibility="toggleVisibility"
+      @reset="resetToDefaults"
+    />
+
+    <!-- 后端设置对话框 -->
+    <BackendSettingsDialog
+      :open="showBackendSettings"
+      @close="showBackendSettings = false; immediateRefresh()"
     />
 
     <!-- 分类管理对话框 -->

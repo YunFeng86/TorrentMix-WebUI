@@ -1,5 +1,5 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter, AddTorrentParams, FetchListResult } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings } from '../interface'
 import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 
 /**
@@ -68,6 +68,69 @@ const STATE_MAP: Record<number, TorrentState> = {
  */
 export class TransAdapter implements BaseAdapter {
   private currentMap = new Map<string, UnifiedTorrent>()
+
+  // ========== 全局/备用限速设置 ==========
+
+  async getTransferSettings(): Promise<TransferSettings> {
+    const { data } = await transClient.post<TRResponse>('', { method: 'session-get' })
+    if (data.result !== 'success') {
+      throw new Error(`Transmission RPC error: ${data.result}`)
+    }
+
+    const args = data.arguments ?? {}
+    const dlEnabled = Boolean(args['speed-limit-down-enabled'])
+    const ulEnabled = Boolean(args['speed-limit-up-enabled'])
+    const dlKbps = Number(args['speed-limit-down'] ?? 0)
+    const ulKbps = Number(args['speed-limit-up'] ?? 0)
+
+    const altEnabled = Boolean(args['alt-speed-enabled'])
+    const altDlKbps = Number(args['alt-speed-down'] ?? 0)
+    const altUlKbps = Number(args['alt-speed-up'] ?? 0)
+
+    return {
+      downloadLimit: dlEnabled ? Math.max(0, dlKbps) * 1024 : 0,
+      uploadLimit: ulEnabled ? Math.max(0, ulKbps) * 1024 : 0,
+      altEnabled,
+      altDownloadLimit: Math.max(0, altDlKbps) * 1024,
+      altUploadLimit: Math.max(0, altUlKbps) * 1024
+    }
+  }
+
+  async setTransferSettings(patch: Partial<TransferSettings>): Promise<void> {
+    const args: Record<string, unknown> = {}
+
+    if (typeof patch.downloadLimit === 'number') {
+      const kbps = Math.max(0, Math.round(patch.downloadLimit / 1024))
+      args['speed-limit-down-enabled'] = kbps > 0
+      args['speed-limit-down'] = kbps
+    }
+    if (typeof patch.uploadLimit === 'number') {
+      const kbps = Math.max(0, Math.round(patch.uploadLimit / 1024))
+      args['speed-limit-up-enabled'] = kbps > 0
+      args['speed-limit-up'] = kbps
+    }
+
+    if (typeof patch.altEnabled === 'boolean') {
+      args['alt-speed-enabled'] = patch.altEnabled
+    }
+    if (typeof patch.altDownloadLimit === 'number') {
+      args['alt-speed-down'] = Math.max(0, Math.round(patch.altDownloadLimit / 1024))
+    }
+    if (typeof patch.altUploadLimit === 'number') {
+      args['alt-speed-up'] = Math.max(0, Math.round(patch.altUploadLimit / 1024))
+    }
+
+    if (Object.keys(args).length === 0) return
+
+    const payload: TRRequest = {
+      method: 'session-set',
+      arguments: args
+    }
+    const { data } = await transClient.post<TRResponse>('', payload)
+    if (data.result !== 'success') {
+      throw new Error(`Transmission RPC error: ${data.result}`)
+    }
+  }
 
   async fetchList(): Promise<FetchListResult> {
     const payload: TRRequest = {
