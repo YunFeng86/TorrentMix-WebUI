@@ -1,8 +1,7 @@
 import type { BaseAdapter } from './interface'
-import type { BackendVersion } from './detect'
+import type { BackendVersion, QbitFeatures } from './detect'
 import { detectBackendWithVersion } from './detect'
-import { QbitV4Adapter } from './qbit/v4'
-import { QbitV5Adapter } from './qbit/v5'
+import { QbitAdapter, DEFAULT_QBIT_FEATURES } from './qbit'
 import { TransAdapter } from './trans/index'
 
 const VERSION_CACHE_KEY = 'webui_backend_version'
@@ -10,6 +9,24 @@ const VERSION_CACHE_KEY = 'webui_backend_version'
 export interface CachedVersion extends BackendVersion {
   timestamp: number
   isUnknown?: boolean  // 是否为未知版本（未认证时）
+}
+
+function resolveQbitFeatures(
+  version: BackendVersion & { isUnknown?: boolean }
+): QbitFeatures {
+  if (version.type !== 'qbit') return DEFAULT_QBIT_FEATURES
+  if (version.isUnknown) return DEFAULT_QBIT_FEATURES
+  if (version.features) return version.features
+
+  const pauseEndpoint = version.major >= 5 ? 'stop' : 'pause'
+  const resumeEndpoint = version.major >= 5 ? 'start' : 'resume'
+
+  return {
+    ...DEFAULT_QBIT_FEATURES,
+    pauseEndpoint,
+    resumeEndpoint,
+    isLegacy: version.major < 5
+  }
 }
 
 export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: BackendVersion }> {
@@ -29,7 +46,8 @@ export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: 
 
   let adapter: BaseAdapter
   if (version.type === 'qbit') {
-    adapter = version.major >= 5 ? new QbitV5Adapter() : new QbitV4Adapter()
+    // 使用单一适配器 + 特性配置
+    adapter = new QbitAdapter(resolveQbitFeatures(version))
   } else {
     // Transmission: 传递 rpcSemver 用于协议版本检测
     adapter = new TransAdapter({ rpcSemver: version.rpcSemver })
@@ -46,8 +64,8 @@ export async function createAdapterByType(
   backendType: import('./detect').BackendType
 ): Promise<BaseAdapter> {
   if (backendType === 'qbit' || backendType === 'unknown') {
-    // qBittorrent v4/v5 的 login API 相同，使用 v4 即可
-    return new QbitV4Adapter()
+    // 登录前使用默认配置（登录后会重新检测）
+    return new QbitAdapter(DEFAULT_QBIT_FEATURES)
   } else {
     // Transmission
     return new TransAdapter()
@@ -55,8 +73,10 @@ export async function createAdapterByType(
 }
 
 export async function refreshVersion(): Promise<BackendVersion> {
-  const version = await detectBackendWithVersion()
-  saveVersionCache(version)
+  const version = await detectBackendWithVersion() as BackendVersion & { isUnknown?: boolean }
+  if (!version.isUnknown) {
+    saveVersionCache(version)
+  }
   return version
 }
 

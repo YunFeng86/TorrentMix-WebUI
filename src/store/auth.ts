@@ -45,24 +45,20 @@ export const useAuthStore = defineStore('auth', () => {
         saveVersionCache(finalVersion)
       }
 
-      // 第六步：智能复用或升级适配器
-      let finalAdapter: import('@/adapter/interface').BaseAdapter
-      const needsQbitUpgrade = finalVersion.type === 'qbit' && finalVersion.major >= 5
-      const needsTransRecreate = finalVersion.type === 'trans' && Boolean(finalVersion.rpcSemver)
-
-      if (needsQbitUpgrade) {
-        // 需要 v5 适配器，创建新实例
-        console.log('[Login] Upgrading to v5 adapter')
-        const { QbitV5Adapter } = await import('@/adapter/qbit/v5')
-        finalAdapter = new QbitV5Adapter()
-      } else if (needsTransRecreate) {
-        console.log('[Login] Recreating Transmission adapter with protocol info')
+      // 第六步：基于版本信息构建最终适配器
+      let finalAdapter: import('@/adapter/interface').BaseAdapter = adapter
+      if (finalVersion.type === 'qbit') {
+        const { QbitAdapter, DEFAULT_QBIT_FEATURES } = await import('@/adapter/qbit')
+        const features = finalVersion.features || {
+          ...DEFAULT_QBIT_FEATURES,
+          pauseEndpoint: finalVersion.major >= 5 ? 'stop' : 'pause',
+          resumeEndpoint: finalVersion.major >= 5 ? 'start' : 'resume',
+          isLegacy: finalVersion.major < 5
+        }
+        finalAdapter = new QbitAdapter(features)
+      } else if (finalVersion.type === 'trans') {
         const { TransAdapter } = await import('@/adapter/trans/index')
         finalAdapter = new TransAdapter({ rpcSemver: finalVersion.rpcSemver })
-      } else {
-        // 复用初始适配器（大部分情况）
-        console.log('[Login] Reusing initial adapter')
-        finalAdapter = adapter
       }
 
       backendStore.setAdapter(finalAdapter, finalVersion)

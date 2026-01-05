@@ -292,4 +292,29 @@ export interface BaseAdapter {
    * 更新后端传输设置（部分字段）
    */
   setTransferSettings(patch: Partial<TransferSettings>): Promise<void>
+
+  // ========== v5 新增功能 ==========
+
+  /**
+   * 重命名种子（仅 WebAPI v2.8.0+）
+   * @param hash - 种子 hash
+   * @param newName - 新名称
+   */
+  renameTorrent?(hash: string, newName: string): Promise<void>
+
+  /**
+   * 重命名文件（仅 WebAPI v2.8.2+）
+   * @param hash - 种子 hash
+   * @param oldPath - 旧文件路径
+   * @param newPath - 新文件路径
+   */
+  renameFile?(hash: string, oldPath: string, newPath: string): Promise<void>
+
+  /**
+   * 重命名文件夹（仅 WebAPI v2.8.2+）
+   * @param hash - 种子 hash
+   * @param oldPath - 旧文件夹路径
+   * @param newPath - 新文件夹路径
+   */
+  renameFolder?(hash: string, oldPath: string, newPath: string): Promise<void>
 }

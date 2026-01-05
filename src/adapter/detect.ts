@@ -3,6 +3,25 @@ import { getQbitBaseUrl } from '@/api/client'
 
 export type BackendType = 'qbit' | 'trans' | 'unknown'
 
+/**
+ * qBittorrent API 特性标志
+ * 基于 WebAPI 版本和应用版本检测
+ */
+export interface QbitFeatures {
+  // 基础端点（v4-v5 差异）
+  pauseEndpoint: 'pause' | 'stop'
+  resumeEndpoint: 'resume' | 'start'
+
+  // 新增特性（按 API 版本）
+  hasTorrentRename: boolean      // WebAPI v2.8.0+
+  hasFileRename: boolean         // WebAPI v2.8.2+
+  hasReannounceField: boolean    // WebAPI v2.9.3+ (torrents/info 返回 reannounce)
+  hasShareLimit: boolean         // WebAPI v2.8.1+ (ratioLimit/seedingTimeLimit)
+
+  // 实用标志
+  isLegacy: boolean              // v4.x 或更早
+}
+
 export interface BackendVersion {
   type: BackendType
   version: string
@@ -11,6 +30,7 @@ export interface BackendVersion {
   patch: number
   apiVersion?: string
   rpcSemver?: string
+  features?: QbitFeatures        // API 特性标志
 }
 
 // 从环境变量读取强制指定的后端类型
@@ -136,6 +156,7 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
         version,
         ...parsed,
         apiVersion,
+        features: isUnknown ? undefined : detectQbitFeatures(version, apiVersion),
         isUnknown
       } as BackendVersion & { isUnknown?: boolean }
     }
@@ -212,6 +233,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
         version,
         ...parsed,
         apiVersion,
+        features: isUnknown ? undefined : detectQbitFeatures(version, apiVersion),
         isUnknown  // 添加标记，未认证时为 true
       } as BackendVersion & { isUnknown?: boolean }
     }
@@ -255,6 +277,69 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
     patch: 0,
     isUnknown: true  // 明确标记为未知
   } as BackendVersion & { isUnknown?: boolean }
+}
+
+/**
+ * 解析 WebAPI 版本 "2.11.3" → { major: 2, minor: 11, patch: 3 }
+ */
+function parseApiVersion(version: string): { major: number; minor: number; patch: number } | null {
+  const match = version.match(/(\d+)\.(\d+)\.(\d+)/)
+  if (!match || !match[1] || !match[2] || !match[3]) return null
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10)
+  }
+}
+
+/**
+ * 版本比较（用于检测特性支持）
+ * @returns -1 if a < b, 0 if a == b, 1 if a > b
+ */
+function compareApiVersions(
+  a: { major: number; minor: number; patch: number },
+  b: { major: number; minor: number; patch: number }
+): number {
+  if (a.major !== b.major) return a.major < b.major ? -1 : 1
+  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
+  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
+  return 0
+}
+
+/**
+ * 检测 qBittorrent API 特性支持
+ */
+function detectQbitFeatures(
+  appVersion: string,
+  apiVersion?: string
+): QbitFeatures {
+  const parsed = parseVersion(appVersion)
+  const apiVer = apiVersion ? parseApiVersion(apiVersion) : null
+
+  // 如果没有 API 版本，使用保守估计（基于应用版本）
+  if (!apiVer) {
+    return {
+      pauseEndpoint: parsed.major >= 5 ? 'stop' : 'pause',
+      resumeEndpoint: parsed.major >= 5 ? 'start' : 'resume',
+      // 无法获取 WebAPI 版本时尽量保守：仅对 v5 开启（端点变化已由 pause/resume 处理）
+      hasTorrentRename: parsed.major >= 5,
+      hasFileRename: parsed.major >= 5,
+      hasReannounceField: parsed.major >= 5,
+      hasShareLimit: parsed.major >= 5,
+      isLegacy: parsed.major < 5
+    }
+  }
+
+  // 有 API 版本时精确检测
+  return {
+    pauseEndpoint: parsed.major >= 5 ? 'stop' : 'pause',
+    resumeEndpoint: parsed.major >= 5 ? 'start' : 'resume',
+    hasTorrentRename: compareApiVersions(apiVer, { major: 2, minor: 8, patch: 0 }) >= 0,
+    hasFileRename: compareApiVersions(apiVer, { major: 2, minor: 8, patch: 2 }) >= 0,
+    hasReannounceField: compareApiVersions(apiVer, { major: 2, minor: 9, patch: 3 }) >= 0,
+    hasShareLimit: compareApiVersions(apiVer, { major: 2, minor: 8, patch: 1 }) >= 0,
+    isLegacy: parsed.major < 5
+  }
 }
 
 /**

@@ -1,20 +1,20 @@
-import { apiClient } from '@/api/client'
-import { QbitBaseAdapter } from './base'
+import { QbitAdapter } from './adapter'
+import type { QbitFeatures } from '../detect'
 
-export class QbitV5Adapter extends QbitBaseAdapter {
-  async pause(hashes: string[]): Promise<void> {
-    const params = new URLSearchParams()
-    params.append('hashes', hashes.join('|') || 'all')
-    await apiClient.post('/api/v2/torrents/stop', params, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    })
-  }
-
-  async resume(hashes: string[]): Promise<void> {
-    const params = new URLSearchParams()
-    params.append('hashes', hashes.join('|') || 'all')
-    await apiClient.post('/api/v2/torrents/start', params, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
-    })
+/**
+ * @deprecated 使用 QbitAdapter 替代，此类仅为向后兼容保留
+ */
+export class QbitV5Adapter extends QbitAdapter {
+  constructor() {
+    const v5Features: QbitFeatures = {
+      pauseEndpoint: 'stop',
+      resumeEndpoint: 'start',
+      hasTorrentRename: true,
+      hasFileRename: true,
+      hasReannounceField: true,
+      hasShareLimit: true,
+      isLegacy: false
+    }
+    super(v5Features)
   }
 }
