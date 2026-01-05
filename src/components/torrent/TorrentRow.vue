@@ -15,6 +15,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   click: [event: Event]
   action: [action: string, hash: string]
+  contextmenu: [event: MouseEvent, hash: string]
 }>()
 
 const columnById = computed<Record<string, ColumnState | undefined>>(() => {
@@ -52,6 +53,13 @@ function handleCheckboxClick(e: MouseEvent) {
     bubbles: true,
     detail: props.torrent.id
   }))
+}
+
+// 处理右键菜单
+function handleContextMenu(e: MouseEvent) {
+  e.preventDefault()
+  e.stopPropagation()
+  emit('contextmenu', e, props.torrent.id)
 }
 
 type TorrentState = UnifiedTorrent['state']
@@ -115,6 +123,7 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
     class="torrent-row cursor-pointer group flex items-center w-full min-w-0"
     :class="{ 'bg-blue-50 border-blue-200': selected }"
     @click="$emit('click', $event)"
+    @contextmenu="handleContextMenu"
   >
     <!-- 选择器 -->
     <div

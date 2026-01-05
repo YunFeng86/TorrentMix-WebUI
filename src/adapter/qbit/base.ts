@@ -5,7 +5,7 @@ import type {
   UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
   QBTorrentProperties, QBFile, QBTracker, QBPeer
 } from '../types'
-import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences } from '../interface'
 
 const STATE_MAP: Record<string, TorrentState> = {
   downloading: 'downloading',
@@ -484,6 +484,85 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       const uploadLimit = typeof patch.altUploadLimit === 'number' ? patch.altUploadLimit : current.altUploadLimit
       await apiClient.post('/api/v2/transfer/setAlternativeSpeedLimits', null, { params: { downloadLimit, uploadLimit } })
     }
+  }
+
+  async getPreferences(): Promise<BackendPreferences> {
+    const { data } = await apiClient.get<Record<string, unknown>>('/api/v2/app/preferences')
+
+    return {
+      // 连接
+      maxConnections: data.connection_limit as number,
+      maxConnectionsPerTorrent: data.max_connections_per_torrent as number,
+
+      // 队列
+      queueDownloadEnabled: data.queueing_enabled as boolean,
+      queueDownloadMax: data.max_active_downloads as number,
+      queueSeedEnabled: data.queueing_enabled as boolean,
+      queueSeedMax: data.max_active_uploads as number,
+
+      // 端口
+      listenPort: data.listen_port as number,
+      randomPort: data.random_port as boolean,
+      upnpEnabled: data.upnp_enabled as boolean,
+
+      // 协议
+      dhtEnabled: data.dht as boolean,
+      pexEnabled: data.pex as boolean,
+      lsdEnabled: data.lsd as boolean,
+      encryption: this.mapEncryptionMode(data.encryption as number)
+    }
+  }
+
+  async setPreferences(patch: Partial<BackendPreferences>): Promise<void> {
+    const qbPrefs: Record<string, unknown> = {}
+
+    // 字段映射（归一化字段 → qB API 字段）
+    if (patch.maxConnections !== undefined) qbPrefs.connection_limit = patch.maxConnections
+    if (patch.maxConnectionsPerTorrent !== undefined) qbPrefs.max_connections_per_torrent = patch.maxConnectionsPerTorrent
+    // qB 的 queueing_enabled 是全局开关（同时影响下载/做种队列）
+    const queueingEnabled =
+      patch.queueDownloadEnabled !== undefined ? patch.queueDownloadEnabled
+        : patch.queueSeedEnabled !== undefined ? patch.queueSeedEnabled
+          : undefined
+    if (queueingEnabled !== undefined) qbPrefs.queueing_enabled = queueingEnabled
+    if (patch.queueDownloadMax !== undefined) qbPrefs.max_active_downloads = patch.queueDownloadMax
+    if (patch.queueSeedMax !== undefined) qbPrefs.max_active_uploads = patch.queueSeedMax
+    if (patch.listenPort !== undefined) qbPrefs.listen_port = patch.listenPort
+    if (patch.randomPort !== undefined) qbPrefs.random_port = patch.randomPort
+    if (patch.upnpEnabled !== undefined) qbPrefs.upnp_enabled = patch.upnpEnabled
+    if (patch.dhtEnabled !== undefined) qbPrefs.dht = patch.dhtEnabled
+    if (patch.pexEnabled !== undefined) qbPrefs.pex = patch.pexEnabled
+    if (patch.lsdEnabled !== undefined) qbPrefs.lsd = patch.lsdEnabled
+    if (patch.encryption !== undefined) qbPrefs.encryption = this.unmapEncryptionMode(patch.encryption)
+
+    if (Object.keys(qbPrefs).length === 0) return
+
+    // 调用 qB API：setPreferences 需要 json 参数（JSON 字符串）
+    const params = new URLSearchParams()
+    params.append('json', JSON.stringify(qbPrefs))
+
+    await apiClient.post('/api/v2/app/setPreferences', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  private mapEncryptionMode(mode: number): BackendPreferences['encryption'] {
+    const mapping: Record<number, BackendPreferences['encryption']> = {
+      0: 'prefer',
+      1: 'require',
+      2: 'disable'
+    }
+    return mapping[mode] ?? 'prefer'
+  }
+
+  private unmapEncryptionMode(mode: BackendPreferences['encryption']): number {
+    if (!mode) return 0
+    const mapping: Record<string, number> = {
+      'prefer': 0,
+      'require': 1,
+      'disable': 2
+    }
+    return mapping[mode] ?? 0
   }
 
   protected normalizeServerState(raw: unknown): ServerState | undefined {

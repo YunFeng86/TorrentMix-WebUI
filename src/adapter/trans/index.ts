@@ -1,5 +1,5 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences } from '../interface'
 import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 
 /**
@@ -378,6 +378,78 @@ export class TransAdapter implements BaseAdapter {
     }
     if (typeof patch.altUploadLimit === 'number') {
       args[altUpKey] = Math.max(0, Math.round(patch.altUploadLimit / 1024))
+    }
+
+    if (Object.keys(args).length === 0) return
+
+    await this.rpcCall('session-set', args)
+  }
+
+  async getPreferences(): Promise<BackendPreferences> {
+    const session = await this.rpcCall<Record<string, unknown>>('session-get')
+
+    return {
+      // 连接
+      maxConnections: this.pick<number>(session, 'peer_limit_global', 'peer-limit-global'),
+      maxConnectionsPerTorrent: this.pick<number>(session, 'peer_limit_per_torrent', 'peer-limit-per-torrent'),
+
+      // 队列
+      queueDownloadEnabled: this.pick<boolean>(session, 'download_queue_enabled', 'download-queue-enabled'),
+      queueDownloadMax: this.pick<number>(session, 'download_queue_size', 'download-queue-size'),
+      queueSeedEnabled: this.pick<boolean>(session, 'seed_queue_enabled', 'seed-queue-enabled'),
+      queueSeedMax: this.pick<number>(session, 'seed_queue_size', 'seed-queue-size'),
+
+      // 端口
+      listenPort: this.pick<number>(session, 'peer_port', 'peer-port'),
+      randomPort: this.pick<boolean>(session, 'peer_port_random_on_start', 'peer-port-random-on-start'),
+      upnpEnabled: this.pick<boolean>(session, 'port_forwarding_enabled', 'port-forwarding-enabled'),
+
+      // 协议
+      dhtEnabled: this.pick<boolean>(session, 'dht_enabled', 'dht-enabled'),
+      pexEnabled: this.pick<boolean>(session, 'pex_enabled', 'pex-enabled')
+      // Transmission 不支持 LSD 和 encryption 设置
+    }
+  }
+
+  async setPreferences(patch: Partial<BackendPreferences>): Promise<void> {
+    const args: Record<string, unknown> = {}
+
+    // 字段名映射（根据协议版本）
+    const keyMapper = (key: string) =>
+      this.protocolVersion === 'json-rpc2' ? key : key.replace(/_/g, '-')
+
+    if (patch.maxConnections !== undefined) {
+      args[keyMapper('peer_limit_global')] = patch.maxConnections
+    }
+    if (patch.maxConnectionsPerTorrent !== undefined) {
+      args[keyMapper('peer_limit_per_torrent')] = patch.maxConnectionsPerTorrent
+    }
+    if (patch.queueDownloadEnabled !== undefined) {
+      args[keyMapper('download_queue_enabled')] = patch.queueDownloadEnabled
+    }
+    if (patch.queueDownloadMax !== undefined) {
+      args[keyMapper('download_queue_size')] = patch.queueDownloadMax
+    }
+    if (patch.queueSeedEnabled !== undefined) {
+      args[keyMapper('seed_queue_enabled')] = patch.queueSeedEnabled
+    }
+    if (patch.queueSeedMax !== undefined) {
+      args[keyMapper('seed_queue_size')] = patch.queueSeedMax
+    }
+    if (patch.listenPort !== undefined) {
+      args[keyMapper('peer_port')] = patch.listenPort
+    }
+    if (patch.randomPort !== undefined) {
+      args[keyMapper('peer_port_random_on_start')] = patch.randomPort
+    }
+    if (patch.upnpEnabled !== undefined) {
+      args[keyMapper('port_forwarding_enabled')] = patch.upnpEnabled
+    }
+    if (patch.dhtEnabled !== undefined) {
+      args[keyMapper('dht_enabled')] = patch.dhtEnabled
+    }
+    if (patch.pexEnabled !== undefined) {
+      args[keyMapper('pex_enabled')] = patch.pexEnabled
     }
 
     if (Object.keys(args).length === 0) return

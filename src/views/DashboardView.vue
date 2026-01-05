@@ -23,6 +23,7 @@ import BackendSettingsDialog from '@/components/BackendSettingsDialog.vue'
 import CategoryManageDialog from '@/components/CategoryManageDialog.vue'
 import TagManageDialog from '@/components/TagManageDialog.vue'
 import Icon from '@/components/Icon.vue'
+import TorrentContextMenu from '@/components/torrent/contextmenu/TorrentContextMenu.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
 
 // 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
@@ -76,6 +77,14 @@ const showCategoryManage = ref(false)
 const showTagManage = ref(false)
 const showColumnSettings = ref(false)
 const showBackendSettings = ref(false)
+
+// 右键菜单状态
+const contextmenuState = ref({
+  show: false,
+  x: 0,
+  y: 0,
+  hashes: [] as string[]
+})
 
 // 窄屏搜索：折叠为按钮，使用下拉 popover 展开
 const searchPopoverOpen = ref(false)
@@ -719,6 +728,83 @@ async function handleTorrentAction(action: string, hash: string) {
   }
 }
 
+// 处理右键菜单打开
+function handleContextMenu(e: MouseEvent, hash: string) {
+  e.preventDefault()
+  e.stopPropagation()
+
+  const hashes = selectedHashes.value.has(hash)
+    ? Array.from(selectedHashes.value)
+    : [hash]
+
+  contextmenuState.value = {
+    show: true,
+    x: e.clientX,
+    y: e.clientY,
+    hashes
+  }
+}
+
+// 处理右键菜单操作
+async function handleContextMenuAction(action: string, hashes: string[]) {
+  contextmenuState.value.show = false
+
+  try {
+    switch (action) {
+      case 'pause':
+        await adapter.value.pause(hashes)
+        break
+      case 'resume':
+        await adapter.value.resume(hashes)
+        break
+      case 'delete': {
+        const count = hashes.length
+        const names = hashes
+          .map(h => torrentStore.torrents.get(h)?.name)
+          .filter(Boolean)
+          .slice(0, 3)
+        const nameList = names.join('、')
+        const moreText = count > 3 ? `等 ${count} 个种子` : `${count} 个种子`
+
+        const deleteFiles = confirm(
+          `是否同时删除下载文件？\n\n种子：${nameList}${count > 3 ? '...' : ''}\n(${moreText})`
+        )
+        if (deleteFiles) {
+          if (!confirm(`⚠️ 确定删除 ${moreText} 并同时删除下载文件吗？\n\n此操作不可恢复！`)) return
+        } else {
+          if (!confirm(`确定删除 ${moreText} 吗？\n（仅删除种子，保留文件）`)) return
+        }
+        await adapter.value.delete(hashes, deleteFiles)
+        break
+      }
+      case 'recheck':
+        await adapter.value.recheckBatch(hashes)
+        break
+      case 'reannounce':
+        await adapter.value.reannounceBatch(hashes)
+        break
+      case 'force-start':
+        await adapter.value.forceStartBatch(hashes, true)
+        break
+      case 'set-category':
+        // TODO: 打开分类选择对话框
+        alert('设置分类功能开发中')
+        return
+      case 'set-tags':
+        // TODO: 打开标签选择对话框
+        alert('设置标签功能开发中')
+        return
+      default:
+        console.warn('[Dashboard] Unknown contextmenu action:', action)
+        return
+    }
+    await immediateRefresh()
+  } catch (err) {
+    console.error('[Dashboard] Contextmenu action failed:', err)
+    alert(err instanceof Error ? err.message : '操作失败')
+  }
+}
+
 // 批量操作：重新校验选中项
 async function handleRecheckSelected() {
   if (selectedHashes.value.size === 0) return
@@ -1156,6 +1242,7 @@ onUnmounted(() => {
                 @click="selectTorrentForDetail"
                 @toggle-select="toggleSelect"
                 @action="handleTorrentAction"
+                @contextmenu="handleContextMenu"
               />
 
               <!-- 普通列表（少量种子时） -->
@@ -1170,6 +1257,7 @@ onUnmounted(() => {
                   @click="selectTorrentForDetail(torrent.id, $event)"
                   @toggle-select="toggleSelect($event.detail)"
                   @action="handleTorrentAction"
+                  @contextmenu="handleContextMenu"
                 />
               </template>
 
@@ -1327,6 +1415,16 @@ onUnmounted(() => {
     <TagManageDialog
       v-if="showTagManage"
       @close="showTagManage = false; immediateRefresh()"
+    />
+
+    <!-- 右键菜单 -->
+    <TorrentContextMenu
+      :show="contextmenuState.show"
+      :x="contextmenuState.x"
+      :y="contextmenuState.y"
+      :hashes="contextmenuState.hashes"
+      @close="contextmenuState.show = false"
+      @action="handleContextMenuAction"
     />
   </div>
 </template>

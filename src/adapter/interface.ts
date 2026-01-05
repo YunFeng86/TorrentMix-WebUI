@@ -50,6 +50,72 @@ export interface TransferSettings {
 }
 
 /**
+ * 后端应用偏好设置（归一化接口）
+ *
+ * 设计原则：
+ * - 字段命名使用 camelCase（TypeScript 约定）
+ * - 速度单位统一为 bytes/s（由 Adapter 层处理）
+ * - 布尔值明确语义（enable/disable）
+ * - 所有字段可选（取决于后端类型和版本）
+ */
+export interface BackendPreferences {
+  // ========== 连接设置 ==========
+  /** 全局最大连接数 */
+  maxConnections?: number
+  /** 单种子最大连接数 */
+  maxConnectionsPerTorrent?: number
+
+  // ========== 队列设置 ==========
+  /** 是否启用下载队列 */
+  queueDownloadEnabled?: boolean
+  /** 同时下载数 */
+  queueDownloadMax?: number
+  /** 是否启用做种队列 */
+  queueSeedEnabled?: boolean
+  /** 同时做种数 */
+  queueSeedMax?: number
+
+  // ========== 端口设置 ==========
+  /** 监听端口 */
+  listenPort?: number
+  /** 是否使用随机端口 */
+  randomPort?: boolean
+  /** 是否启用 UPnP 端口映射 */
+  upnpEnabled?: boolean
+
+  // ========== 协议设置（按后端支持情况） ==========
+  /** 是否启用 DHT */
+  dhtEnabled?: boolean
+  /** 是否启用 PeX */
+  pexEnabled?: boolean
+  /** 是否启用 LSD */
+  lsdEnabled?: boolean
+  /**
+   * 加密模式
+   * - prefer: 优先加密（允许回退）
+   * - require: 强制加密
+   * - disable: 禁用加密
+   */
+  encryption?: 'prefer' | 'require' | 'disable'
+
+  // ========== 代理设置（qB 专属） ==========
+  proxy?: {
+    /** 代理类型 */
+    type?: 'none' | 'http' | 'socks4' | 'socks5'
+    /** 代理主机 */
+    host?: string
+    /** 代理端口 */
+    port?: number
+    /** 用户名（可选） */
+    username?: string
+    /** 密码（可选） */
+    password?: string
+    /** 是否启用代理 */
+    enabled?: boolean
+  }
+}
+
+/**
  * BaseAdapter 接口 - 定义所有后端适配器必须实现的方法
  *
  * 设计原则：
@@ -317,4 +383,18 @@ export interface BaseAdapter {
    * @param newPath - 新文件夹路径
    */
   renameFolder?(hash: string, oldPath: string, newPath: string): Promise<void>
+
+  // ========== 应用偏好设置 ==========
+
+  /**
+   * 获取后端应用偏好设置
+   * @returns BackendPreferences - 后端设置对象
+   */
+  getPreferences(): Promise<BackendPreferences>
+
+  /**
+   * 更新后端应用偏好设置（部分字段）
+   * @param patch - 要修改的字段（undefined 字段会被忽略）
+   */
+  setPreferences(patch: Partial<BackendPreferences>): Promise<void>
 }
