@@ -1,5 +1,5 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
 import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 
 /**
@@ -398,6 +398,8 @@ export class TransAdapter implements BaseAdapter {
       queueDownloadMax: this.pick<number>(session, 'download_queue_size', 'download-queue-size'),
       queueSeedEnabled: this.pick<boolean>(session, 'seed_queue_enabled', 'seed-queue-enabled'),
       queueSeedMax: this.pick<number>(session, 'seed_queue_size', 'seed-queue-size'),
+      queueStalledEnabled: this.pick<boolean>(session, 'queue_stalled_enabled', 'queue-stalled-enabled'),
+      queueStalledMinutes: this.pick<number>(session, 'queue_stalled_minutes', 'queue-stalled-minutes'),
 
       // 端口
       listenPort: this.pick<number>(session, 'peer_port', 'peer-port'),
@@ -406,8 +408,21 @@ export class TransAdapter implements BaseAdapter {
 
       // 协议
       dhtEnabled: this.pick<boolean>(session, 'dht_enabled', 'dht-enabled'),
-      pexEnabled: this.pick<boolean>(session, 'pex_enabled', 'pex-enabled')
-      // Transmission 不支持 LSD 和 encryption 设置
+      pexEnabled: this.pick<boolean>(session, 'pex_enabled', 'pex-enabled'),
+      lsdEnabled: this.pick<boolean>(session, 'lpd_enabled', 'lpd-enabled'),
+      encryption: this.mapEncryptionMode(this.pick<string>(session, 'encryption')),
+
+      // Phase 1: 做种限制
+      shareRatioLimit: this.pick<number>(session, 'seed_ratio_limit', 'seedRatioLimit', 'seed-ratio-limit'),
+      shareRatioLimited: this.pick<boolean>(session, 'seed_ratio_limited', 'seedRatioLimited', 'seed-ratio-limited'),
+      seedingTimeLimit: this.pick<number>(session, 'seed_idle_limit', 'seedIdleLimit', 'seed-idle-limit'),
+      seedingTimeLimited: this.pick<boolean>(session, 'seed_idle_limited', 'seedIdleLimited', 'seed-idle-limited'),
+
+      // Phase 1: 下载路径
+      savePath: this.pick<string>(session, 'download_dir', 'download-dir'),
+      incompleteDirEnabled: this.pick<boolean>(session, 'incomplete_dir_enabled', 'incomplete-dir-enabled'),
+      incompleteDir: this.pick<string>(session, 'incomplete_dir', 'incomplete-dir'),
+      incompleteFilesSuffix: this.pick<boolean>(session, 'rename_partial_files', 'rename-partial-files')
     }
   }
 
@@ -451,10 +466,101 @@ export class TransAdapter implements BaseAdapter {
     if (patch.pexEnabled !== undefined) {
       args[keyMapper('pex_enabled')] = patch.pexEnabled
     }
+    if (patch.lsdEnabled !== undefined) {
+      args[keyMapper('lpd_enabled')] = patch.lsdEnabled
+    }
+    if (patch.encryption !== undefined) {
+      args.encryption = this.unmapEncryptionMode(patch.encryption)
+    }
+
+    // Phase 1: 做种限制和队列
+    if (patch.shareRatioLimit !== undefined) {
+      if (this.protocolVersion === 'json-rpc2') args.seed_ratio_limit = patch.shareRatioLimit
+      else args.seedRatioLimit = patch.shareRatioLimit
+    }
+    if (patch.shareRatioLimited !== undefined) {
+      if (this.protocolVersion === 'json-rpc2') args.seed_ratio_limited = patch.shareRatioLimited
+      else args.seedRatioLimited = patch.shareRatioLimited
+    }
+    if (patch.seedingTimeLimit !== undefined) {
+      if (this.protocolVersion === 'json-rpc2') args.seed_idle_limit = patch.seedingTimeLimit
+      else args.seedIdleLimit = patch.seedingTimeLimit
+    }
+    if (patch.seedingTimeLimited !== undefined) {
+      if (this.protocolVersion === 'json-rpc2') args.seed_idle_limited = patch.seedingTimeLimited
+      else args.seedIdleLimited = patch.seedingTimeLimited
+    }
+    if (patch.queueStalledEnabled !== undefined) {
+      args[keyMapper('queue_stalled_enabled')] = patch.queueStalledEnabled
+    }
+    if (patch.queueStalledMinutes !== undefined) {
+      args[keyMapper('queue_stalled_minutes')] = patch.queueStalledMinutes
+    }
+
+    // Phase 1: 下载路径
+    if (patch.savePath !== undefined) {
+      args[keyMapper('download_dir')] = patch.savePath
+    }
+    if (patch.incompleteDirEnabled !== undefined) {
+      args[keyMapper('incomplete_dir_enabled')] = patch.incompleteDirEnabled
+    }
+    if (patch.incompleteDir !== undefined) {
+      args[keyMapper('incomplete_dir')] = patch.incompleteDir
+    }
+    if (patch.incompleteFilesSuffix !== undefined) {
+      args[keyMapper('rename_partial_files')] = patch.incompleteFilesSuffix
+    }
 
     if (Object.keys(args).length === 0) return
 
     await this.rpcCall('session-set', args)
+  }
+
+  getCapabilities(): BackendCapabilities {
+    return {
+      // 队列相关
+      hasSeparateSeedQueue: true, // TR 的下载/做种队列是独立的
+      hasStalledQueue: true,       // 支持 queue-stalled-minutes
+
+      // 协议相关
+      hasLSD: true,                // 支持 LPD（本地发现）
+      hasEncryption: true,
+      encryptionModes: ['tolerate', 'prefer', 'require'],
+
+      // 做种限制
+      hasSeedingRatioLimit: true,  // 支持 seedRatioLimit
+      hasSeedingTimeLimit: true,   // 支持 seedIdleLimit
+      seedingTimeLimitMode: 'idle',
+
+      // 路径相关
+      hasDefaultSavePath: true,    // 支持 download-dir
+      hasIncompleteDir: true,      // 支持 incomplete-dir
+      hasCreateSubfolder: false,
+      hasIncompleteFilesSuffix: true,
+
+      // 高级功能
+      hasProxy: false,             // 不支持代理设置
+      hasScheduler: false,         // 不支持调度器
+      hasIPFilter: false,          // 不支持 IP 过滤
+      hasScripts: true,            // 支持脚本系统（script-torrent-done-filename）
+      hasBlocklist: true,          // 支持屏蔽列表（blocklist-url）
+      hasTrashTorrentFiles: true,  // 支持 trash-original-torrent-files
+    }
+  }
+
+  private mapEncryptionMode(mode?: string): BackendPreferences['encryption'] {
+    if (!mode) return undefined
+    const normalized = String(mode).toLowerCase()
+    if (normalized === 'required') return 'require'
+    if (normalized === 'preferred') return 'prefer'
+    if (normalized === 'tolerated') return 'tolerate'
+    return 'tolerate'
+  }
+
+  private unmapEncryptionMode(mode: BackendPreferences['encryption']): string {
+    if (mode === 'require') return 'required'
+    if (mode === 'prefer') return 'preferred'
+    return 'tolerated'
   }
 
   private buildIds(hashes: string[]): Record<string, unknown> {

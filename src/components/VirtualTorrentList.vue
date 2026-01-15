@@ -17,6 +17,7 @@ interface Emits {
   (e: 'click', hash: string, event: Event): void
   (e: 'toggle-select', hash: string): void
   (e: 'action', action: string, hash: string): void
+  (e: 'contextmenu', event: MouseEvent, hash: string): void
 }
 
 const props = defineProps<Props>()
@@ -31,6 +32,10 @@ function handleRowClick(hash: string, event: Event) {
 function handleToggleSelect(event: Event) {
   const customEvent = event as CustomEvent<string>
   emit('toggle-select', customEvent.detail)
+}
+
+function handleContextMenu(event: MouseEvent, hash: string) {
+  emit('contextmenu', event, hash)
 }
 
 const internalScrollRef = ref<HTMLElement | null>(null)
@@ -60,6 +65,7 @@ const virtualizer = useVirtualizer({
         @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
         @toggle-select="handleToggleSelect"
         @action="(action, hash) => emit('action', action, hash)"
+        @contextmenu="handleContextMenu"
         :style="{
           position: 'absolute',
           top: 0,
@@ -84,6 +90,7 @@ const virtualizer = useVirtualizer({
       @click="handleRowClick(torrents[virtualRow.index]!.id, $event)"
       @toggle-select="handleToggleSelect"
       @action="(action, hash) => emit('action', action, hash)"
+      @contextmenu="handleContextMenu"
       :style="{
         position: 'absolute',
         top: 0,

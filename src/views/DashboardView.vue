@@ -28,6 +28,7 @@ import { formatSpeed, formatBytes } from '@/utils/format'
 
 // 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
 const VIRTUAL_SCROLL_THRESHOLD = 200
+const TORRENT_ROW_ESTIMATED_HEIGHT = 60
 
 const router = useRouter()
 const torrentStore = useTorrentStore()
@@ -49,6 +50,88 @@ const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
 const windowWidth = ref(window.innerWidth)
 const tableScrollRef = ref<HTMLElement | null>(null)
+
+type ScrollAnchor = {
+  id?: string
+  offset: number
+  scrollTop: number
+}
+
+const pendingScrollAnchor = ref<ScrollAnchor | null>(null)
+let restoreScheduled = false
+
+function captureScrollAnchor(): ScrollAnchor | null {
+  const scrollEl = tableScrollRef.value
+  if (!scrollEl) return null
+
+  const scrollRect = scrollEl.getBoundingClientRect()
+  const rows = Array.from(scrollEl.querySelectorAll<HTMLElement>('[data-torrent-id]'))
+  if (rows.length === 0) {
+    return { offset: 0, scrollTop: scrollEl.scrollTop }
+  }
+
+  let bestRow: HTMLElement | null = null
+  let bestOffset = 0
+
+  for (const row of rows) {
+    const rect = row.getBoundingClientRect()
+    if (rect.bottom <= scrollRect.top) continue
+    if (rect.top >= scrollRect.bottom) continue
+    const offset = rect.top - scrollRect.top
+    if (!bestRow || Math.abs(offset) < Math.abs(bestOffset)) {
+      bestRow = row
+      bestOffset = offset
+    }
+  }
+
+  return {
+    id: bestRow?.dataset.torrentId,
+    offset: bestOffset,
+    scrollTop: scrollEl.scrollTop,
+  }
+}
+
+async function restoreScrollAnchor() {
+  const scrollEl = tableScrollRef.value
+  const anchor = pendingScrollAnchor.value
+  pendingScrollAnchor.value = null
+  restoreScheduled = false
+  if (!scrollEl || !anchor) return
+
+  const maxScroll = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight)
+
+  const index = anchor.id ? sortedTorrents.value.findIndex(t => t.id === anchor.id) : -1
+  if (index < 0) {
+    scrollEl.scrollTop = Math.max(0, Math.min(anchor.scrollTop, maxScroll))
+    return
+  }
+
+  const id = anchor.id
+  if (!id) return
+
+  const target = index * TORRENT_ROW_ESTIMATED_HEIGHT - anchor.offset
+  scrollEl.scrollTop = Math.max(0, Math.min(target, maxScroll))
+
+  await nextTick()
+
+  const row = scrollEl.querySelector<HTMLElement>(`[data-torrent-id="${CSS.escape(id)}"]`)
+  if (!row) return
+  const scrollRect = scrollEl.getBoundingClientRect()
+  const rowRect = row.getBoundingClientRect()
+  const offsetNow = rowRect.top - scrollRect.top
+  const delta = offsetNow - anchor.offset
+  if (delta === 0) return
+
+  scrollEl.scrollTop = Math.max(0, Math.min(scrollEl.scrollTop + delta, maxScroll))
+}
+
+function schedulePreserveTopAnchor() {
+  if (isMobile.value) return
+  if (restoreScheduled) return
+  pendingScrollAnchor.value = captureScrollAnchor()
+  restoreScheduled = true
+  void nextTick().then(restoreScrollAnchor)
+}
 
 // 表格列宽调整与可见性控制
 const {
@@ -367,6 +450,12 @@ type SortDirection = 'asc' | 'desc'
 
 const sortField = ref<SortField>('name')
 const sortDirection = ref<SortDirection>('asc')
+
+watch(
+  [stateFilter, categoryFilter, tagFilter, debouncedSearchQuery, sortField, sortDirection],
+  () => schedulePreserveTopAnchor(),
+  { flush: 'pre' }
+)
 
 // 切换排序字段（表头点击）
 function toggleSort(field: SortField) {

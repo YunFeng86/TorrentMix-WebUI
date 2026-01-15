@@ -5,7 +5,7 @@ import type {
   UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
   QBTorrentProperties, QBFile, QBTracker, QBPeer
 } from '../types'
-import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
 
 const STATE_MAP: Record<string, TorrentState> = {
   downloading: 'downloading',
@@ -488,28 +488,48 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
 
   async getPreferences(): Promise<BackendPreferences> {
     const { data } = await apiClient.get<Record<string, unknown>>('/api/v2/app/preferences')
+    const pick = <T>(...keys: string[]): T | undefined => {
+      for (const key of keys) {
+        const val = data[key]
+        if (val !== undefined) return val as T
+      }
+      return undefined
+    }
 
     return {
       // 连接
-      maxConnections: data.connection_limit as number,
-      maxConnectionsPerTorrent: data.max_connections_per_torrent as number,
+      maxConnections: pick<number>('max_connec', 'connection_limit'),
+      maxConnectionsPerTorrent: pick<number>('max_connec_per_torrent', 'max_connections_per_torrent'),
 
       // 队列
-      queueDownloadEnabled: data.queueing_enabled as boolean,
-      queueDownloadMax: data.max_active_downloads as number,
-      queueSeedEnabled: data.queueing_enabled as boolean,
-      queueSeedMax: data.max_active_uploads as number,
+      queueDownloadEnabled: pick<boolean>('queueing_enabled'),
+      queueDownloadMax: pick<number>('max_active_downloads'),
+      queueSeedEnabled: pick<boolean>('queueing_enabled'),
+      queueSeedMax: pick<number>('max_active_uploads'),
 
       // 端口
-      listenPort: data.listen_port as number,
-      randomPort: data.random_port as boolean,
-      upnpEnabled: data.upnp_enabled as boolean,
+      listenPort: pick<number>('listen_port'),
+      randomPort: pick<boolean>('random_port'),
+      upnpEnabled: pick<boolean>('upnp', 'upnp_enabled'),
 
       // 协议
-      dhtEnabled: data.dht as boolean,
-      pexEnabled: data.pex as boolean,
-      lsdEnabled: data.lsd as boolean,
-      encryption: this.mapEncryptionMode(data.encryption as number)
+      dhtEnabled: pick<boolean>('dht'),
+      pexEnabled: pick<boolean>('pex'),
+      lsdEnabled: pick<boolean>('lsd'),
+      encryption: this.mapEncryptionMode(pick<number>('encryption') ?? 0),
+
+      // Phase 1: 做种限制
+      shareRatioLimit: pick<number>('max_ratio', 'share_ratio_limit'),
+      shareRatioLimited: pick<boolean>('max_ratio_enabled', 'share_ratio_limit_enabled'),
+      seedingTimeLimit: pick<number>('max_seeding_time', 'max_seeding_time_minutes'),
+      seedingTimeLimited: pick<boolean>('max_seeding_time_enabled'),
+
+      // Phase 1: 下载路径
+      savePath: pick<string>('save_path'),
+      incompleteDirEnabled: pick<boolean>('temp_path_enabled'),
+      incompleteDir: pick<string>('temp_path', 'incomplete_dir'),
+      incompleteFilesSuffix: pick<boolean>('incomplete_files_ext'),
+      createSubfolderEnabled: pick<boolean>('create_subfolder_enabled', 'subcategory_enabled')
     }
   }
 
@@ -517,8 +537,12 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     const qbPrefs: Record<string, unknown> = {}
 
     // 字段映射（归一化字段 → qB API 字段）
-    if (patch.maxConnections !== undefined) qbPrefs.connection_limit = patch.maxConnections
-    if (patch.maxConnectionsPerTorrent !== undefined) qbPrefs.max_connections_per_torrent = patch.maxConnectionsPerTorrent
+    if (patch.maxConnections !== undefined) {
+      qbPrefs.max_connec = patch.maxConnections
+    }
+    if (patch.maxConnectionsPerTorrent !== undefined) {
+      qbPrefs.max_connec_per_torrent = patch.maxConnectionsPerTorrent
+    }
     // qB 的 queueing_enabled 是全局开关（同时影响下载/做种队列）
     const queueingEnabled =
       patch.queueDownloadEnabled !== undefined ? patch.queueDownloadEnabled
@@ -529,11 +553,34 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     if (patch.queueSeedMax !== undefined) qbPrefs.max_active_uploads = patch.queueSeedMax
     if (patch.listenPort !== undefined) qbPrefs.listen_port = patch.listenPort
     if (patch.randomPort !== undefined) qbPrefs.random_port = patch.randomPort
-    if (patch.upnpEnabled !== undefined) qbPrefs.upnp_enabled = patch.upnpEnabled
+    if (patch.upnpEnabled !== undefined) {
+      qbPrefs.upnp = patch.upnpEnabled
+    }
     if (patch.dhtEnabled !== undefined) qbPrefs.dht = patch.dhtEnabled
     if (patch.pexEnabled !== undefined) qbPrefs.pex = patch.pexEnabled
     if (patch.lsdEnabled !== undefined) qbPrefs.lsd = patch.lsdEnabled
     if (patch.encryption !== undefined) qbPrefs.encryption = this.unmapEncryptionMode(patch.encryption)
+
+    // Phase 1: 做种限制
+    if (patch.shareRatioLimit !== undefined) {
+      qbPrefs.max_ratio = patch.shareRatioLimit
+    }
+    if (patch.shareRatioLimited !== undefined) {
+      qbPrefs.max_ratio_enabled = patch.shareRatioLimited
+    }
+    if (patch.seedingTimeLimit !== undefined) {
+      qbPrefs.max_seeding_time = patch.seedingTimeLimit
+    }
+    if (patch.seedingTimeLimited !== undefined) qbPrefs.max_seeding_time_enabled = patch.seedingTimeLimited
+
+    // Phase 1: 下载路径
+    if (patch.savePath !== undefined) qbPrefs.save_path = patch.savePath
+    if (patch.incompleteDirEnabled !== undefined) qbPrefs.temp_path_enabled = patch.incompleteDirEnabled
+    if (patch.incompleteDir !== undefined) {
+      qbPrefs.temp_path = patch.incompleteDir
+    }
+    if (patch.incompleteFilesSuffix !== undefined) qbPrefs.incomplete_files_ext = patch.incompleteFilesSuffix
+    if (patch.createSubfolderEnabled !== undefined) qbPrefs.create_subfolder_enabled = patch.createSubfolderEnabled
 
     if (Object.keys(qbPrefs).length === 0) return
 
@@ -544,6 +591,38 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     await apiClient.post('/api/v2/app/setPreferences', params, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
+  }
+
+  getCapabilities(): BackendCapabilities {
+    return {
+      // 队列相关
+      hasSeparateSeedQueue: false, // qB 的队列是全局的（queueing_enabled 同时控制下载/做种）
+      hasStalledQueue: false,
+
+      // 协议相关
+      hasLSD: true,                 // 支持 LSD（本地服务发现）
+      hasEncryption: true,          // 支持加密模式
+      encryptionModes: ['prefer', 'require', 'disable'],
+
+      // 做种限制
+      hasSeedingRatioLimit: true,   // 支持 max_ratio
+      hasSeedingTimeLimit: true,    // 支持 max_seeding_time
+      seedingTimeLimitMode: 'duration',
+
+      // 路径相关
+      hasDefaultSavePath: true,     // 支持 save_path
+      hasIncompleteDir: true,       // 支持 temp_path
+      hasCreateSubfolder: true,     // 支持 create_subfolder_enabled
+      hasIncompleteFilesSuffix: true, // 支持 incomplete_files_ext
+
+      // 高级功能
+      hasProxy: true,               // 支持代理设置
+      hasScheduler: true,           // 支持调度器
+      hasIPFilter: true,            // 支持 IP 过滤
+      hasScripts: false,            // 不支持脚本系统
+      hasBlocklist: false,          // 不支持屏蔽列表 URL
+      hasTrashTorrentFiles: false,
+    }
   }
 
   private mapEncryptionMode(mode: number): BackendPreferences['encryption'] {
@@ -558,6 +637,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   private unmapEncryptionMode(mode: BackendPreferences['encryption']): number {
     if (!mode) return 0
     const mapping: Record<string, number> = {
+      'tolerate': 0,
       'prefer': 0,
       'require': 1,
       'disable': 2

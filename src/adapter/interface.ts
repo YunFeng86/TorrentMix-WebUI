@@ -50,6 +50,61 @@ export interface TransferSettings {
 }
 
 /**
+ * 后端能力标记（用于 UI 动态显示不同后端的设置项）
+ */
+export interface BackendCapabilities {
+  // ========== 队列相关 ==========
+  /** 是否支持独立的做种队列（qB: false, TR: true） */
+  hasSeparateSeedQueue: boolean
+  /** 是否支持队列停滞检测 */
+  hasStalledQueue: boolean
+
+  // ========== 协议相关 ==========
+  /** 是否支持本地发现（qB: LSD / TR: LPD） */
+  hasLSD: boolean
+  /** 是否支持加密模式设置 */
+  hasEncryption: boolean
+  /** 支持的加密模式选项 */
+  encryptionModes: Array<'tolerate' | 'prefer' | 'require' | 'disable'>
+
+  // ========== 做种限制 ==========
+  /** 是否支持分享率限制 */
+  hasSeedingRatioLimit: boolean
+  /** 是否支持做种时间/空闲限制 */
+  hasSeedingTimeLimit: boolean
+  /**
+   * 做种时间限制语义
+   * - duration: 做种总时长（qB: max_seeding_time）
+   * - idle: 做种空闲时长（TR: seedIdleLimit）
+   */
+  seedingTimeLimitMode: 'duration' | 'idle'
+
+  // ========== 路径相关 ==========
+  /** 是否支持设置默认保存路径 */
+  hasDefaultSavePath: boolean
+  /** 是否支持设置未完成下载目录 */
+  hasIncompleteDir: boolean
+  /** 是否支持“创建子文件夹”选项（qB: create_subfolder_enabled） */
+  hasCreateSubfolder: boolean
+  /** 是否支持“未完成文件后缀”选项（qB: .!qB / TR: .part） */
+  hasIncompleteFilesSuffix: boolean
+
+  // ========== 高级功能（Phase 2） ==========
+  /** 是否支持代理设置（qB 专属） */
+  hasProxy: boolean
+  /** 是否支持调度器（qB 专属） */
+  hasScheduler: boolean
+  /** 是否支持 IP 过滤（qB 专属） */
+  hasIPFilter: boolean
+  /** 是否支持脚本系统（TR 专属） */
+  hasScripts: boolean
+  /** 是否支持屏蔽列表（TR 专属） */
+  hasBlocklist: boolean
+  /** 是否支持“移除 .torrent 文件”（TR: trash-original-torrent-files） */
+  hasTrashTorrentFiles: boolean
+}
+
+/**
  * 后端应用偏好设置（归一化接口）
  *
  * 设计原则：
@@ -92,11 +147,12 @@ export interface BackendPreferences {
   lsdEnabled?: boolean
   /**
    * 加密模式
+   * - tolerate: 宽容（TR: tolerated）
    * - prefer: 优先加密（允许回退）
    * - require: 强制加密
    * - disable: 禁用加密
    */
-  encryption?: 'prefer' | 'require' | 'disable'
+  encryption?: 'tolerate' | 'prefer' | 'require' | 'disable'
 
   // ========== 代理设置（qB 专属） ==========
   proxy?: {
@@ -113,6 +169,32 @@ export interface BackendPreferences {
     /** 是否启用代理 */
     enabled?: boolean
   }
+
+  // ========== Phase 1: 做种限制 ==========
+  /** 做种分享率限制（-1 或 0 表示不限制） */
+  shareRatioLimit?: number
+  /** 是否启用做种分享率限制 */
+  shareRatioLimited?: boolean
+  /** 做种时间限制（分钟，-1 或 0 表示不限制） */
+  seedingTimeLimit?: number
+  /** 是否启用做种时间限制 */
+  seedingTimeLimited?: boolean
+  /** 队列停滞时间（分钟，TR） */
+  queueStalledMinutes?: number
+  /** 是否启用队列停滞检测（TR） */
+  queueStalledEnabled?: boolean
+
+  // ========== Phase 1: 下载路径 ==========
+  /** 默认保存路径 */
+  savePath?: string
+  /** 是否启用“未完成下载目录” */
+  incompleteDirEnabled?: boolean
+  /** 未完成下载目录 */
+  incompleteDir?: string
+  /** 是否给未完成文件添加后缀（qB: .!qB / TR: .part） */
+  incompleteFilesSuffix?: boolean
+  /** 添加种子时创建子文件夹（qB: create_subfolder_enabled） */
+  createSubfolderEnabled?: boolean
 }
 
 /**
@@ -397,4 +479,10 @@ export interface BaseAdapter {
    * @param patch - 要修改的字段（undefined 字段会被忽略）
    */
   setPreferences(patch: Partial<BackendPreferences>): Promise<void>
+
+  /**
+   * 获取后端支持的功能列表（用于 UI 动态显示）
+   * @returns BackendCapabilities - 后端能力标记对象
+   */
+  getCapabilities(): BackendCapabilities
 }

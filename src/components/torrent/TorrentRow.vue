@@ -122,6 +122,7 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
   <div
     class="torrent-row cursor-pointer group flex items-center w-full min-w-0"
     :class="{ 'bg-blue-50 border-blue-200': selected }"
+    :data-torrent-id="torrent.id"
     @click="$emit('click', $event)"
     @contextmenu="handleContextMenu"
   >
