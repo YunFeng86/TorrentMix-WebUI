@@ -77,9 +77,9 @@ const getStateText = (state: TorrentState) => {
         />
       </div>
 
-      <!-- 种子信息 -->
-      <div class="flex-1 min-w-0">
-        <h3 class="font-medium text-gray-900 text-sm leading-5 mb-2 break-words">
+        <!-- 种子信息 -->
+        <div class="flex-1 min-w-0">
+        <h3 class="font-medium text-gray-900 text-sm leading-5 mb-2 line-clamp-2">
           {{ torrent.name }}
         </h3>
 

@@ -309,7 +309,7 @@ onMounted(() => {
     >
       <div class="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden flex flex-col">
         <!-- 头部 -->
-        <div class="px-6 py-4 border-b border-gray-200">
+        <div class="px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200">
           <div class="flex items-start justify-between gap-3">
             <div>
               <h2 class="text-lg font-semibold">后端设置</h2>
@@ -326,13 +326,13 @@ onMounted(() => {
         </div>
 
         <!-- Tab 导航 -->
-        <div class="border-b border-gray-200 px-6">
-          <nav class="flex gap-6 -mb-px">
+        <div class="border-b border-gray-200 px-4 sm:px-6">
+          <nav class="flex flex-nowrap gap-4 sm:gap-6 -mb-px overflow-x-auto max-w-full">
             <button
               v-for="tab in tabs"
               :key="tab.id"
               @click="activeTab = tab.id"
-              :class="`px-1 py-3 text-sm font-medium border-b-2 transition-colors ${
+              :class="`px-1 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                 activeTab === tab.id
                   ? 'border-black text-black'
                   : 'border-transparent text-gray-500 hover:text-gray-700'
@@ -344,7 +344,7 @@ onMounted(() => {
         </div>
 
         <!-- 内容区 -->
-        <div ref="contentScrollRef" class="flex-1 overflow-auto p-6">
+        <div ref="contentScrollRef" class="flex-1 overflow-auto p-4 sm:p-6">
           <div v-if="loading" class="text-sm text-gray-500">加载中...</div>
 
           <div v-else class="space-y-4">
@@ -359,7 +359,7 @@ onMounted(() => {
                   <div class="text-sm font-medium text-gray-900">全局限速</div>
                   <div class="text-xs text-gray-500">单位：KB/s（0 表示不限制）</div>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label class="space-y-1">
                     <span class="text-xs text-gray-500">下载</span>
                     <input v-model.number="transferForm.downloadKbps" type="number" min="0" class="input" />
@@ -379,7 +379,7 @@ onMounted(() => {
                     启用
                   </label>
                 </div>
-                <div class="grid grid-cols-2 gap-3">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label class="space-y-1">
                     <span class="text-xs text-gray-500">下载</span>
                     <input v-model.number="transferForm.altDownloadKbps" type="number" min="0" class="input" />
@@ -396,7 +396,7 @@ onMounted(() => {
             <div v-if="activeTab === 'connection'" class="space-y-4">
               <div class="card p-4">
                 <h3 class="text-sm font-medium mb-3">连接限制</h3>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <label class="space-y-1">
                     <span class="text-xs text-gray-500">全局最大连接数</span>
                     <input v-model.number="prefsForm.maxConnections" type="number" min="0" class="input" />

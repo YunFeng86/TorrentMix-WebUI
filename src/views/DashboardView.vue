@@ -15,6 +15,7 @@ import TorrentRow from '@/components/torrent/TorrentRow.vue'
 import TorrentCard from '@/components/torrent/TorrentCard.vue'
 import AddTorrentDialog from '@/components/AddTorrentDialog.vue'
 import VirtualTorrentList from '@/components/VirtualTorrentList.vue'
+import VirtualTorrentCardList from '@/components/VirtualTorrentCardList.vue'
 import TorrentBottomPanel from '@/components/TorrentBottomPanel.vue'
 import ResizableTableHeader from '@/components/table/ResizableTableHeader.vue'
 import OverflowActionBar, { type OverflowActionItem } from '@/components/toolbar/OverflowActionBar.vue'
@@ -28,6 +29,8 @@ import { formatSpeed, formatBytes } from '@/utils/format'
 
 // 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
 const VIRTUAL_SCROLL_THRESHOLD = 200
+// 移动端卡片视图更重：阈值单独设置，避免大量 DOM 导致窄屏 resize 卡顿
+const MOBILE_VIRTUAL_SCROLL_THRESHOLD = 80
 const TORRENT_ROW_ESTIMATED_HEIGHT = 60
 
 const router = useRouter()
@@ -50,6 +53,7 @@ const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
 const windowWidth = ref(window.innerWidth)
 const tableScrollRef = ref<HTMLElement | null>(null)
+const mobileScrollRef = ref<HTMLElement | null>(null)
 
 type ScrollAnchor = {
   id?: string
@@ -316,18 +320,26 @@ function selectTorrentByIndex(index: number) {
 }
 
 // 监听屏幕尺寸变化
+let resizeRafId: number | null = null
+let pendingResizeWidth = window.innerWidth
 const handleResize = () => {
-  windowWidth.value = window.innerWidth
-  isMobile.value = window.innerWidth < 768
-  // 移动端自动折叠侧边栏
-  if (isMobile.value) {
-    sidebarCollapsed.value = true
-  }
+  pendingResizeWidth = window.innerWidth
+  if (resizeRafId !== null) return
+  resizeRafId = requestAnimationFrame(() => {
+    resizeRafId = null
 
-  // 回到较宽屏幕后收起窄屏 popover
-  if (window.innerWidth >= 1120) {
-    searchPopoverOpen.value = false
-  }
+    const w = pendingResizeWidth
+    if (windowWidth.value !== w) windowWidth.value = w
+
+    const nextMobile = w < 768
+    if (isMobile.value !== nextMobile) isMobile.value = nextMobile
+
+    // 移动端自动折叠侧边栏
+    if (nextMobile) sidebarCollapsed.value = true
+
+    // 回到较宽屏幕后收起窄屏 popover
+    if (w >= 1120) searchPopoverOpen.value = false
+  })
 }
 
 // 过滤器（支持暂停的二级分类）
@@ -522,6 +534,7 @@ const sortedTorrents = computed(() => {
 
 // 是否使用虚拟滚动（超过阈值时启用）
 const useVirtualScroll = computed(() => sortedTorrents.value.length >= VIRTUAL_SCROLL_THRESHOLD)
+const useMobileVirtualScroll = computed(() => sortedTorrents.value.length >= MOBILE_VIRTUAL_SCROLL_THRESHOLD)
 
 const selectedBadge = computed<string | undefined>(() => {
   const count = selectedHashes.value.size
@@ -984,6 +997,7 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   window.removeEventListener('keydown', handleKeyDown)
   document.removeEventListener('click', handleDocumentClick)
+  if (resizeRafId !== null) cancelAnimationFrame(resizeRafId)
 })
 </script>
 
@@ -1289,7 +1303,7 @@ onUnmounted(() => {
         <!-- 种子列表容器：flex-1 自动填充剩余空间 -->
         <div class="flex-1 overflow-hidden min-h-0">
           <!-- 桌面端列表视图 -->
-          <div class="hidden md:flex h-full min-h-0 flex-col">
+          <div v-if="!isMobile" class="h-full min-h-0 flex flex-col">
             <!-- 表头 -->
             <ResizableTableHeader
               :columns="columns"
@@ -1364,7 +1378,7 @@ onUnmounted(() => {
           </div>
 
           <!-- 移动端卡片视图 -->
-          <div class="md:hidden h-full overflow-auto p-4">
+          <div v-else ref="mobileScrollRef" class="h-full overflow-auto p-4">
             <!-- 空状态 -->
             <div v-if="sortedTorrents.length === 0" class="text-center py-16">
               <Icon name="inbox" :size="64" class="text-gray-300 mx-auto mb-4" />
@@ -1374,8 +1388,17 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- 卡片网格 -->
-            <div class="space-y-3">
+            <!-- 卡片列表 -->
+            <VirtualTorrentCardList
+              v-if="useMobileVirtualScroll && sortedTorrents.length > 0"
+              :torrents="sortedTorrents"
+              :selected-hashes="selectedHashes"
+              :scroll-element="mobileScrollRef"
+              @click="selectTorrentForDetail"
+              @toggle-select="toggleSelect"
+            />
+
+            <div v-else class="space-y-3">
               <TorrentCard
                 v-for="torrent in sortedTorrents"
                 :key="torrent.id"

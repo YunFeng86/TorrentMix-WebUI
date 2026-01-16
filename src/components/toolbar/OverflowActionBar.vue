@@ -109,12 +109,27 @@ function measureWidths() {
   return { widths, overflowButtonWidth }
 }
 
+// Cache measurements so we don't force sync layout reads on every resize tick.
+// `icon-btn` has a fixed width today, but caching keeps this component robust
+// if styles change (or if we ever add variable-width actions).
+let cachedWidths = new Map<string, number>()
+let cachedOverflowButtonWidth = 0
+function refreshMeasurements() {
+  const { widths, overflowButtonWidth } = measureWidths()
+  cachedWidths = widths
+  cachedOverflowButtonWidth = overflowButtonWidth
+}
+
 function computeLayout() {
   const container = containerRef.value
   if (!container) return
 
-  const { widths, overflowButtonWidth } = measureWidths()
-  const available = Math.floor(container.getBoundingClientRect().width)
+  // Prefer ResizeObserver's contentRect width (avoid extra layout reads during resize).
+  const available = pendingAvailableWidth ?? Math.floor(container.getBoundingClientRect().width)
+  pendingAvailableWidth = null
+
+  const widths = cachedWidths
+  const overflowButtonWidth = cachedOverflowButtonWidth
   const items = itemList.value
 
   if (available <= 0 || items.length === 0) {
@@ -123,33 +138,35 @@ function computeLayout() {
     return
   }
 
+  const DEFAULT_BTN_WIDTH = 36 // w-9 at 16px base; used if measurement isn't ready yet
   const indexed = items.map((item, index) => ({
     item,
     index,
-    width: widths.get(item.id) ?? 0,
+    width: widths.get(item.id) ?? DEFAULT_BTN_WIDTH,
     priority: item.priority ?? 100,
     pinned: item.pinned === true,
     group: item.group ?? '_default',
   }))
 
-  const sumWidth = (ids: string[]) => ids.reduce((sum, id) => sum + (widths.get(id) ?? 0), 0)
   const gapPx = 6 // gap-1.5 in Tailwind = 0.375rem ~= 6px
   const groupGapPx = 8 // gap-2 ~= 8px
   const groupOverheadPx = 8 // p-1 left+right ~= 8px
   const groupSepPx = 9 // w-px + mx-1 ~= 9px
 
-  const allIds = indexed.map(x => x.item.id)
   const allWidth = (() => {
     if (!props.grouped) {
-      return sumWidth(allIds) + Math.max(0, allIds.length - 1) * gapPx
+      const total = indexed.reduce((sum, it) => sum + it.width, 0)
+      return total + Math.max(0, indexed.length - 1) * gapPx
     }
 
     const groupsInOrder: string[] = []
     const counts = new Map<string, number>()
+    const groupWidths = new Map<string, number>()
     for (const it of indexed) {
       const g = it.group
       if (!counts.has(g)) groupsInOrder.push(g)
       counts.set(g, (counts.get(g) ?? 0) + 1)
+      groupWidths.set(g, (groupWidths.get(g) ?? 0) + it.width)
     }
 
     let total = 0
@@ -159,7 +176,7 @@ function computeLayout() {
       if (count <= 0) continue
       if (groupCount > 0) total += groupGapPx
       total += groupOverheadPx
-      total += sumWidth(indexed.filter(x => x.group === g).map(x => x.item.id))
+      total += groupWidths.get(g) ?? 0
       total += Math.max(0, count - 1) * groupSepPx
       groupCount += 1
     }
@@ -167,12 +184,13 @@ function computeLayout() {
   })()
 
   if (allWidth <= available) {
-    visibleIds.value = allIds
+    visibleIds.value = indexed.map(x => x.item.id)
     overflowIds.value = []
     return
   }
 
-  const reserved = overflowButtonWidth > 0 ? overflowButtonWidth + gapPx : 0
+  const reservedWidth = (overflowButtonWidth > 0 ? overflowButtonWidth : DEFAULT_BTN_WIDTH) + gapPx
+  const reserved = Math.max(0, reservedWidth)
   const budget = Math.max(0, available - reserved)
 
   const pinned = indexed.filter(x => x.pinned).sort((a, b) => a.index - b.index)
@@ -185,16 +203,14 @@ function computeLayout() {
   const groupCounts = new Map<string, number>()
   let chosenGroupCount = 0
 
-  const tryAdd = (id: string) => {
-    const w = widths.get(id) ?? 0
-    const item = indexed.find(x => x.item.id === id)
-    const group = item?.group ?? '_default'
-
+  const tryAdd = (it: (typeof indexed)[number]) => {
+    const w = it.width
+    const group = it.group
     if (!props.grouped) {
       const extraGap = chosen.size > 0 ? gapPx : 0
       if (used + extraGap + w <= budget) {
         used += extraGap + w
-        chosen.add(id)
+        chosen.add(it.item.id)
         return true
       }
       return false
@@ -208,7 +224,7 @@ function computeLayout() {
 
     if (used + extra + w <= budget) {
       used += extra + w
-      chosen.add(id)
+      chosen.add(it.item.id)
       groupCounts.set(group, currentCount + 1)
       if (currentCount === 0) chosenGroupCount += 1
       return true
@@ -217,10 +233,10 @@ function computeLayout() {
   }
 
   for (const p of pinned) {
-    if (!tryAdd(p.item.id)) break
+    if (!tryAdd(p)) break
   }
   for (const c of candidates) {
-    if (!tryAdd(c.item.id)) continue
+    if (!tryAdd(c)) continue
   }
 
   // 如果一个都放不下，至少放第一个（避免只剩更多按钮）
@@ -228,10 +244,10 @@ function computeLayout() {
     chosen.add(indexed[0]!.item.id)
   }
 
-  const visible = indexed
-    .filter(x => chosen.has(x.item.id))
-    .sort((a, b) => a.index - b.index)
-    .map(x => x.item.id)
+  const visible: string[] = []
+  for (const it of indexed) {
+    if (chosen.has(it.item.id)) visible.push(it.item.id)
+  }
 
   const overflow = indexed
     .filter(x => !chosen.has(x.item.id))
@@ -244,6 +260,7 @@ function computeLayout() {
 
 let ro: ResizeObserver | null = null
 let rafId: number | null = null
+let pendingAvailableWidth: number | null = null
 function scheduleCompute() {
   if (rafId !== null) return
   rafId = requestAnimationFrame(() => {
@@ -254,9 +271,16 @@ function scheduleCompute() {
 
 onMounted(() => {
   document.addEventListener('click', handleDocumentClick)
-  ro = new ResizeObserver(() => scheduleCompute())
+  ro = new ResizeObserver((entries) => {
+    const w = entries[0]?.contentRect?.width
+    pendingAvailableWidth = typeof w === 'number' ? Math.floor(w) : null
+    scheduleCompute()
+  })
   if (containerRef.value) ro.observe(containerRef.value)
-  nextTick(() => scheduleCompute())
+  nextTick(() => {
+    refreshMeasurements()
+    scheduleCompute()
+  })
 })
 
 onUnmounted(() => {
@@ -268,6 +292,7 @@ onUnmounted(() => {
 
 watch(itemList, async () => {
   await nextTick()
+  refreshMeasurements()
   scheduleCompute()
 }, { deep: true })
 
