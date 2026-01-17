@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { UnifiedTorrent } from '@/adapter/types'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
+import { getSwarmTexts, getSwarmTitle } from '@/utils/swarm'
 import Icon from '@/components/Icon.vue'
 
 const props = defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
@@ -77,8 +78,8 @@ const getStateText = (state: TorrentState) => {
         />
       </div>
 
-        <!-- 种子信息 -->
-        <div class="flex-1 min-w-0">
+      <!-- 种子信息 -->
+      <div class="flex-1 min-w-0">
         <h3 class="font-medium text-gray-900 text-sm leading-5 mb-2 line-clamp-2">
           {{ torrent.name }}
         </h3>
@@ -99,6 +100,9 @@ const getStateText = (state: TorrentState) => {
           </span>
           <span class="text-xs text-gray-500 font-mono">
             {{ formatBytes(torrent.size) }}
+          </span>
+          <span class="text-xs text-gray-500 font-mono" :title="getSwarmTitle(torrent)">
+            做种 {{ getSwarmTexts(torrent).seeds }} • 下载 {{ getSwarmTexts(torrent).peers }}
           </span>
         </div>
       </div>

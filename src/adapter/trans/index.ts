@@ -229,6 +229,31 @@ export class TransAdapter implements BaseAdapter {
     return undefined
   }
 
+  private getSwarmCounts(trackerStats?: TRTrackerStat[]): { seeds: number; leechers: number } | undefined {
+    if (!trackerStats || trackerStats.length === 0) return undefined
+
+    // tracker_stats 每个 tracker 都会给一次统计，多 tracker 场景下简单相加会明显过量；
+    // 这里取 max 来近似当前可见的 swarm 规模。
+    let seeds = 0
+    let leechers = 0
+    let hasAny = false
+    for (const stat of trackerStats) {
+      const s = this.pick<number>(stat as any, 'seeder_count', 'seederCount')
+      const l = this.pick<number>(stat as any, 'leecher_count', 'leecherCount')
+      if (typeof s === 'number' && Number.isFinite(s) && s >= 0) {
+        hasAny = true
+        seeds = Math.max(seeds, s)
+      }
+      if (typeof l === 'number' && Number.isFinite(l) && l >= 0) {
+        hasAny = true
+        leechers = Math.max(leechers, l)
+      }
+    }
+
+    if (!hasAny) return undefined
+    return { seeds, leechers }
+  }
+
   /**
    * 封装 RPC 调用，统一处理协议版本和错误
    */
@@ -278,6 +303,9 @@ export class TransAdapter implements BaseAdapter {
 
     const state = errorCode !== 0 ? 'error' : (STATE_MAP[statusCode] ?? 'error')
 
+    const trackerStats = this.pick<TRTrackerStat[]>(raw as any, 'tracker_stats', 'trackerStats')
+    const swarm = this.getSwarmCounts(trackerStats)
+
     return {
       id: hash,
       name: this.pick<string>(raw as any, 'name') ?? '',
@@ -295,6 +323,10 @@ export class TransAdapter implements BaseAdapter {
       savePath: this.pick<string>(raw as any, 'download_dir', 'downloadDir') ?? '',
       category: raw.labels?.[0] || '',
       tags: raw.labels || [],
+      totalSeeds: swarm?.seeds,
+      totalPeers: swarm?.leechers,
+      numSeeds: swarm?.seeds,
+      numPeers: swarm?.leechers,
     }
   }
 
@@ -579,6 +611,7 @@ export class TransAdapter implements BaseAdapter {
             'eta', 'upload_ratio',
             'added_date', 'download_dir',
             'labels',
+            'tracker_stats',
           ]
         : [
             'hashString', 'id', 'name', 'status', 'error', 'errorString',
@@ -587,6 +620,7 @@ export class TransAdapter implements BaseAdapter {
             'eta', 'uploadRatio',
             'addedDate', 'downloadDir',
             'labels',
+            'trackerStats',
           ],
     })
 
@@ -750,14 +784,9 @@ export class TransAdapter implements BaseAdapter {
 
     const trackerStats = torrent.tracker_stats || torrent.trackerStats || []
 
-    // 从 tracker_stats 聚合 Swarm 统计
-    let totalSeeds = 0
-    let totalLeechers = 0
-
-    for (const stat of trackerStats) {
-      totalSeeds += this.pick<number>(stat as any, 'seeder_count', 'seederCount') ?? 0
-      totalLeechers += this.pick<number>(stat as any, 'leecher_count', 'leecherCount') ?? 0
-    }
+    const swarm = this.getSwarmCounts(trackerStats)
+    const totalSeeds = swarm?.seeds ?? 0
+    const totalLeechers = swarm?.leechers ?? 0
 
     const files: TorrentFile[] = (torrent.files || []).map((f, idx) => {
       const priorityNum = torrent.priorities?.[idx] ?? 0
@@ -806,6 +835,11 @@ export class TransAdapter implements BaseAdapter {
     const upLimited = this.pick<boolean>(torrent as any, 'upload_limited', 'uploadLimited') ?? false
     const upLimitKb = this.pick<number>(torrent as any, 'upload_limit', 'uploadLimit') ?? 0
 
+    // Transmission 的 swarm 总数来自 trackerStats；连接侧的 seeds/leechers 只能用 peers 列表近似统计。
+    // 注意：peers 列表可能被 daemon 截断（不是完整连接），因此这两个值更偏“可见连接”而非精确值。
+    const connectedSeeds = peers.filter(p => p.progress >= 1).length
+    const connectedLeechers = peers.filter(p => p.progress >= 0 && p.progress < 1).length
+
     return {
       hash: this.pick<string>(torrent as any, 'hash_string', 'hashString') || hash,
       name: torrent.name || '',
@@ -821,8 +855,8 @@ export class TransAdapter implements BaseAdapter {
       category: torrent.labels?.[0] || '',
       tags: torrent.labels || [],
       connections: this.pick<number>(torrent as any, 'peers_connected', 'peersConnected') || 0,
-      numSeeds: totalSeeds,
-      numLeechers: totalLeechers,
+      numSeeds: connectedSeeds,
+      numLeechers: connectedLeechers,
       totalSeeds,
       totalLeechers,
       files,

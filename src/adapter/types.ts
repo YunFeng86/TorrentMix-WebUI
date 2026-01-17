@@ -33,8 +33,16 @@ export interface UnifiedTorrent {
   // 扩展字段
   category?: string;
   tags?: string[];
-  numSeeds?: number;   // 已连接的种子数（用于健康度计算）
-  numPeers?: number;   // 已连接的 Peer 数（用于健康度计算）
+  // 做种/下载者统计
+  // - connected*: 当前已连接的做种/下载者（类似 qB WebUI 的 Seeds/Peers 左侧数字）
+  // - total*: Swarm 总做种/总下载者（类似 qB WebUI 的括号数字）
+  // - numSeeds/numPeers: 为兼容旧 UI 的“最佳可用值”（优先 total，其次 connected）
+  connectedSeeds?: number;
+  connectedPeers?: number;
+  totalSeeds?: number;
+  totalPeers?: number;
+  numSeeds?: number;
+  numPeers?: number;
 }
 
 // 分类接口
@@ -78,6 +86,9 @@ export interface QBTorrent {
   tags?: string;
   num_seeds?: number;
   num_leechs?: number;
+  // 一些 qB 版本/接口会返回 Swarm 统计（总做种/总下载）
+  num_complete?: number;
+  num_incomplete?: number;
 }
 
 // qBittorrent sync/maindata 响应

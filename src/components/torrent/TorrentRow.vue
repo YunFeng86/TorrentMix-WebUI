@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import type { UnifiedTorrent } from '@/adapter/types'
 import type { ColumnState } from '@/composables/useTableColumns/types'
 import { formatBytes, formatSpeed } from '@/utils/format'
+import { getSwarmTexts, getSwarmTitle } from '@/utils/swarm'
 import Icon from '@/components/Icon.vue'
 
 const props = defineProps<{
@@ -77,22 +78,28 @@ const getStateIcon = (state: TorrentState): { name: string; color: 'blue' | 'cya
   return icons[state]
 }
 
-// 计算健康度百分比
-const getHealthPercentage = (torrent: UnifiedTorrent): number => {
-  const seeds = torrent.numSeeds || 0
-  const peers = torrent.numPeers || 0
-  const total = seeds + peers
+// 计算健康度百分比（偏向“可下载性”：做种数越多越健康）
+const getHealthPercentage = (torrent: UnifiedTorrent): number | null => {
+  const hasSeeds = torrent.numSeeds !== undefined && torrent.numSeeds !== null
+  const hasPeers = torrent.numPeers !== undefined && torrent.numPeers !== null
+  const hasConnectedSeeds = torrent.connectedSeeds !== undefined && torrent.connectedSeeds !== null
+  const hasConnectedPeers = torrent.connectedPeers !== undefined && torrent.connectedPeers !== null
+  if (!hasSeeds && !hasPeers && !hasConnectedSeeds && !hasConnectedPeers) return null
 
-  if (total === 0) return 0
-  if (seeds === 0) return Math.min(25, total * 5)  // 无种子时最多25%
-  if (seeds >= 10) return 100  // 10个或以上种子时100%
+  // 健康度以“可用性”为主：优先看 swarm 总做种/总下载者（numSeeds/numPeers 已做兼容）。
+  const seeds = torrent.numSeeds ?? torrent.connectedSeeds ?? 0
+  const peers = torrent.numPeers ?? torrent.connectedPeers ?? 0
 
-  // 根据种子数和总连接数计算健康度
-  const seedRatio = seeds / Math.max(total, 1)
-  const seedBonus = Math.min(seeds * 15, 60)  // 每个种子15分，最多60分
-  const baseHealth = seedRatio * 40  // 种子比例最多40分
+  if (seeds >= 10) return 100
+  if (seeds >= 5) return 80
+  if (seeds >= 1) return 50
+  if (peers > 0) return 10
+  return 0
+}
 
-  return Math.min(100, Math.round(baseHealth + seedBonus))
+function formatHealth(torrent: UnifiedTorrent): string {
+  const value = getHealthPercentage(torrent)
+  return value === null ? '--' : `${value}%`
 }
 
 // 格式化ETA
@@ -162,9 +169,11 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
             <span class="hidden sm:inline">•</span>
             <span class="hidden sm:inline">比率 {{ torrent.ratio.toFixed(2) }}</span>
             <span class="hidden md:inline">•</span>
-            <span class="hidden md:inline">{{ torrent.numSeeds || 0 }}/{{ torrent.numPeers || 0 }} 连接</span>
+            <span class="hidden md:inline" :title="getSwarmTitle(torrent)">
+              做种 {{ getSwarmTexts(torrent).seeds }} • 下载 {{ getSwarmTexts(torrent).peers }}
+            </span>
             <span class="hidden lg:inline">•</span>
-            <span class="hidden lg:inline">健康度 {{ getHealthPercentage(torrent) }}%</span>
+            <span class="hidden lg:inline">健康度 {{ formatHealth(torrent) }}</span>
           </div>
         </div>
       </div>

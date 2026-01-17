@@ -353,6 +353,12 @@ function handleClickOutside() {
                     <span class="font-mono">{{ detail.numSeeds }}</span>
                     <span class="text-gray-600">下载数:</span>
                     <span class="font-mono">{{ detail.numLeechers }}</span>
+                    <template v-if="detail.totalSeeds !== undefined || detail.totalLeechers !== undefined">
+                      <span class="text-gray-600">Swarm 做种:</span>
+                      <span class="font-mono">{{ detail.totalSeeds ?? '-' }}</span>
+                      <span class="text-gray-600">Swarm 下载:</span>
+                      <span class="font-mono">{{ detail.totalLeechers ?? '-' }}</span>
+                    </template>
                   </div>
                 </div>
 

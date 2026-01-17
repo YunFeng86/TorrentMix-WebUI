@@ -668,6 +668,23 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     if (rawState) {
       normalizedState = STATE_MAP[rawState] ?? 'error'
     }
+
+    const rawAny = raw as Record<string, unknown>
+
+    // 注意：sync/maindata 增量更新时，字段可能缺失；区分“字段缺失”和“值为 0”。
+    const hasConnectedSeeds = 'num_seeds' in rawAny
+    const hasConnectedPeers = 'num_leechs' in rawAny
+    const hasTotalSeeds = 'num_complete' in rawAny
+    const hasTotalPeers = 'num_incomplete' in rawAny
+
+    const connectedSeeds = hasConnectedSeeds ? ((rawAny.num_seeds as number | undefined) ?? 0) : existing?.connectedSeeds
+    const connectedPeers = hasConnectedPeers ? ((rawAny.num_leechs as number | undefined) ?? 0) : existing?.connectedPeers
+    const totalSeeds = hasTotalSeeds ? ((rawAny.num_complete as number | undefined) ?? 0) : existing?.totalSeeds
+    const totalPeers = hasTotalPeers ? ((rawAny.num_incomplete as number | undefined) ?? 0) : existing?.totalPeers
+
+    const bestSeeds = totalSeeds ?? connectedSeeds
+    const bestPeers = totalPeers ?? connectedPeers
+
     return {
       id: hash,
       name: raw.name ?? existing?.name ?? '',
@@ -682,8 +699,12 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       savePath: raw.save_path ?? existing?.savePath ?? '',
       category: raw.category || existing?.category,
       tags: raw.tags ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : existing?.tags,
-      numSeeds: raw.num_seeds ?? existing?.numSeeds ?? 0,
-      numPeers: raw.num_leechs ?? existing?.numPeers ?? 0
+      connectedSeeds,
+      connectedPeers,
+      totalSeeds,
+      totalPeers,
+      numSeeds: bestSeeds,
+      numPeers: bestPeers
     }
   }
 

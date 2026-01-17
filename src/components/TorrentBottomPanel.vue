@@ -145,14 +145,57 @@ function handleAction(action: string) {
 
 // 计算健康度
 function getHealthStatus(torrent: UnifiedTorrent) {
-  const seeds = torrent.numSeeds || 0
-  const peers = torrent.numPeers || 0
+  const hasSeeds = torrent.numSeeds !== undefined && torrent.numSeeds !== null
+  const hasPeers = torrent.numPeers !== undefined && torrent.numPeers !== null
+  const hasConnectedSeeds = torrent.connectedSeeds !== undefined && torrent.connectedSeeds !== null
+  const hasConnectedPeers = torrent.connectedPeers !== undefined && torrent.connectedPeers !== null
+  const hasTotalSeeds = torrent.totalSeeds !== undefined && torrent.totalSeeds !== null
+  const hasTotalPeers = torrent.totalPeers !== undefined && torrent.totalPeers !== null
+  if (!hasSeeds && !hasPeers && !hasConnectedSeeds && !hasConnectedPeers && !hasTotalSeeds && !hasTotalPeers) {
+    return {
+      text: '未知',
+      classes: 'text-gray-600 bg-gray-100',
+      title: '后端未提供做种/下载者统计',
+    }
+  }
 
-  if (seeds >= 10) return { text: '优秀', color: 'text-green-600', bg: 'bg-green-100' }
-  if (seeds >= 5) return { text: '良好', color: 'text-blue-600', bg: 'bg-blue-100' }
-  if (seeds >= 1) return { text: '一般', color: 'text-yellow-600', bg: 'bg-yellow-100' }
-  if (peers > 0) return { text: '较差', color: 'text-orange-600', bg: 'bg-orange-100' }
-  return { text: '无连接', color: 'text-red-600', bg: 'bg-red-100' }
+  // 健康度以 swarm 总数为主，缺失时回退到 connected。
+  const seeds = torrent.numSeeds ?? torrent.totalSeeds ?? torrent.connectedSeeds ?? 0
+  const peers = torrent.numPeers ?? torrent.totalPeers ?? torrent.connectedPeers ?? 0
+
+  if (seeds >= 10) return { text: '优秀', classes: 'text-green-700 bg-green-100', title: '做种 >= 10' }
+  if (seeds >= 5) return { text: '良好', classes: 'text-blue-700 bg-blue-100', title: '做种 >= 5' }
+  if (seeds >= 1) return { text: '一般', classes: 'text-yellow-700 bg-yellow-100', title: '做种 >= 1' }
+  if (peers > 0) return { text: '无种子', classes: 'text-red-700 bg-red-100', title: '下载者 > 0 但做种为 0' }
+  return { text: '无同伴', classes: 'text-gray-700 bg-gray-100', title: '做种/下载者均为 0（可能尚未 announce 或暂时无同伴）' }
+}
+
+function formatCountPair(connected?: number | null, total?: number | null, best?: number | null): string {
+  const hasConnected = connected !== undefined && connected !== null
+  const hasTotal = total !== undefined && total !== null
+  if (hasConnected && hasTotal) return `${connected}(${total})`
+  if (hasTotal) return String(total)
+  if (best !== undefined && best !== null) return String(best)
+  if (hasConnected) return String(connected)
+  return '--'
+}
+
+function formatTotalPeers(torrent: UnifiedTorrent): string {
+  const hasConnectedSeeds = torrent.connectedSeeds !== undefined && torrent.connectedSeeds !== null
+  const hasConnectedPeers = torrent.connectedPeers !== undefined && torrent.connectedPeers !== null
+  const hasTotalSeeds = torrent.totalSeeds !== undefined && torrent.totalSeeds !== null
+  const hasTotalPeers = torrent.totalPeers !== undefined && torrent.totalPeers !== null
+
+  if ((hasConnectedSeeds || hasConnectedPeers) && (hasTotalSeeds || hasTotalPeers)) {
+    const c = (torrent.connectedSeeds ?? 0) + (torrent.connectedPeers ?? 0)
+    const t = (torrent.totalSeeds ?? torrent.numSeeds ?? 0) + (torrent.totalPeers ?? torrent.numPeers ?? 0)
+    return `${c}(${t})`
+  }
+
+  const hasSeeds = torrent.numSeeds !== undefined && torrent.numSeeds !== null
+  const hasPeers = torrent.numPeers !== undefined && torrent.numPeers !== null
+  if (!hasSeeds && !hasPeers) return '--'
+  return String((torrent.numSeeds ?? 0) + (torrent.numPeers ?? 0))
 }
 
 // ETA格式化
@@ -329,7 +372,8 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               <span class="hidden sm:inline">比率 {{ torrent.ratio.toFixed(2) }}</span>
               <div
                 class="hidden sm:inline-flex items-center px-2 py-1 rounded text-xs font-medium"
-                :class="getHealthStatus(torrent)"
+                :class="getHealthStatus(torrent).classes"
+                :title="getHealthStatus(torrent).title"
               >
                 {{ getHealthStatus(torrent).text }}
               </div>
@@ -480,22 +524,23 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
               </h4>
               <div class="bg-gray-50 rounded-lg p-4 space-y-3">
                 <div class="flex justify-between">
-                  <span class="text-gray-600">种子数量</span>
-                  <span class="font-mono font-medium">{{ torrent.numSeeds || 0 }}</span>
+                  <span class="text-gray-600">做种</span>
+                  <span class="font-mono font-medium">{{ formatCountPair(torrent.connectedSeeds, torrent.totalSeeds, torrent.numSeeds) }}</span>
                 </div>
                 <div class="flex justify-between">
                   <span class="text-gray-600">下载者</span>
-                  <span class="font-mono font-medium">{{ torrent.numPeers || 0 }}</span>
+                  <span class="font-mono font-medium">{{ formatCountPair(torrent.connectedPeers, torrent.totalPeers, torrent.numPeers) }}</span>
                 </div>
                 <div class="flex justify-between">
-                  <span class="text-gray-600">总连接</span>
-                  <span class="font-mono font-medium">{{ (torrent.numSeeds || 0) + (torrent.numPeers || 0) }}</span>
+                  <span class="text-gray-600">总数</span>
+                  <span class="font-mono font-medium">{{ formatTotalPeers(torrent) }}</span>
                 </div>
                 <div class="flex justify-between">
                   <span class="text-gray-600">健康状态</span>
                   <span
                     class="inline-flex items-center px-2 py-1 rounded text-xs font-medium"
-                    :class="getHealthStatus(torrent)"
+                    :class="getHealthStatus(torrent).classes"
+                    :title="getHealthStatus(torrent).title"
                   >
                     {{ getHealthStatus(torrent).text }}
                   </span>
