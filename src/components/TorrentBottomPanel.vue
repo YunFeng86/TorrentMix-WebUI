@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { UnifiedTorrentDetail, UnifiedTorrent, TorrentFile } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 import { formatBytes, formatSpeed } from '@/utils/format'
 import { useDragResize } from '@/composables/useDragResize'
 import { useTableColumns } from '@/composables/useTableColumns'
@@ -365,7 +366,11 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
             :size="20"
           />
           <div class="min-w-0 flex-1">
-            <h3 class="font-semibold text-gray-900 truncate">{{ torrent?.name || '选择一个种子查看详情' }}</h3>
+            <SafeText
+              as="h3"
+              class="font-semibold text-gray-900 truncate"
+              :text="torrent?.name || '选择一个种子查看详情'"
+            />
             <div v-if="torrent" class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs sm:text-sm text-gray-500 mt-1">
               <span>{{ formatBytes(torrent.size) }}</span>
               <span>进度 {{ (torrent.progress * 100).toFixed(1) }}%</span>

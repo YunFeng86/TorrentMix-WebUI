@@ -3,6 +3,7 @@ import type { UnifiedTorrent } from '@/adapter/types'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
 import { getSwarmTexts, getSwarmTitle } from '@/utils/swarm'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 
 const props = defineProps<{ torrent: UnifiedTorrent; selected: boolean }>()
 
@@ -80,9 +81,11 @@ const getStateText = (state: TorrentState) => {
 
       <!-- 种子信息 -->
       <div class="flex-1 min-w-0">
-        <h3 class="font-medium text-gray-900 text-sm leading-5 mb-2 line-clamp-2">
-          {{ torrent.name }}
-        </h3>
+        <SafeText
+          as="h3"
+          class="font-medium text-gray-900 text-sm leading-5 mb-2 line-clamp-2"
+          :text="torrent.name"
+        />
 
         <!-- 状态标签 -->
         <div class="flex items-center gap-2">

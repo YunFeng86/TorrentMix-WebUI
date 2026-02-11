@@ -18,9 +18,11 @@ export function isFatalError(error: unknown): boolean {
 }
 
 function getConfiguredQbitBaseUrl(): string {
+  // `import.meta.env` is Vite-specific; guard it for non-Vite runtimes (e.g. Node tests).
+  const env = (import.meta as any).env ?? {}
   // 开发环境走 Vite 代理，baseURL 留空
-  if (import.meta.env.DEV) return ''
-  return (import.meta.env.VITE_QB_URL ?? '').trim()
+  if (env.DEV) return ''
+  return String(env.VITE_QB_URL ?? '').trim()
 }
 
 function isSameOrigin(baseUrl: string): boolean {
@@ -39,7 +41,8 @@ export function getQbitBaseUrl(): string {
 }
 
 const baseURL = getConfiguredQbitBaseUrl()
-const allowCrossOrigin = import.meta.env.VITE_ALLOW_CROSS_ORIGIN === 'true'
+const env = (import.meta as any).env ?? {}
+const allowCrossOrigin = env.VITE_ALLOW_CROSS_ORIGIN === 'true'
 const sameOrigin = isSameOrigin(baseURL)
 const withCredentials = sameOrigin || (allowCrossOrigin && baseURL.length > 0)
 

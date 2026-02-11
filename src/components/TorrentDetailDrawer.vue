@@ -3,6 +3,7 @@ import { ref, computed } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { UnifiedTorrentDetail } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
 
 interface Props {
@@ -229,7 +230,11 @@ function handleClickOutside() {
           <!-- 头部 -->
           <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0">
             <div class="flex-1 min-w-0">
-              <h2 class="text-lg font-semibold text-gray-900 truncate">{{ detail?.name || '种子详情' }}</h2>
+              <SafeText
+                as="h2"
+                class="text-lg font-semibold text-gray-900 truncate"
+                :text="detail?.name || '种子详情'"
+              />
               <p v-if="detail" class="text-sm text-gray-500">{{ hash?.slice(0, 16) }}...</p>
             </div>
             <button

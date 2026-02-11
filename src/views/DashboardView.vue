@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, computed, watch, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
-import { useDebounceFn } from '@vueuse/core'
 import { useTorrentStore } from '@/store/torrent'
 import { useAuthStore } from '@/store/auth'
 import { useBackendStore } from '@/store/backend'
 import { usePolling } from '@/composables/usePolling'
+import { useTorrentContext, type TorrentAction } from '@/composables/useTorrentContext'
 import { useTableColumns } from '@/composables/useTableColumns'
 import { TORRENT_TABLE_COLUMNS } from '@/composables/useTableColumns/configs'
 import { AuthError } from '@/api/client'
@@ -26,6 +26,7 @@ import TagManageDialog from '@/components/TagManageDialog.vue'
 import Icon from '@/components/Icon.vue'
 import TorrentContextMenu from '@/components/torrent/contextmenu/TorrentContextMenu.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
+import SafeText from '@/components/SafeText.vue'
 
 // 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
 const VIRTUAL_SCROLL_THRESHOLD = 200
@@ -38,17 +39,28 @@ const torrentStore = useTorrentStore()
 const authStore = useAuthStore()
 const backendStore = useBackendStore()
 
-// 从 Store 获取 adapter（解耦：View 层不再直接实例化 Adapter）
-const adapter = computed(() => backendStore.adapter!)
-
 // 确保在访问 adapter 之前已初始化
 if (!backendStore.isInitialized) {
   throw new Error('[DashboardView] Backend not initialized. This should not happen after bootstrap.')
 }
 
-const selectedHashes = ref<Set<string>>(new Set())
-const searchQuery = ref('')
-const debouncedSearchQuery = ref('')  // 用于过滤的实际搜索词（防抖后）
+const torrentContext = useTorrentContext()
+const {
+  adapter,
+  uiState,
+  debouncedFilter,
+  stateFilter,
+  categoryFilter,
+  tagFilter,
+  filteredTorrents,
+  sortedTorrents,
+  toggleSelect,
+  toggleSortByColumn,
+  getSortIconForColumn,
+  refreshList,
+  runTorrentAction,
+} = torrentContext
+
 const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
 const windowWidth = ref(window.innerWidth)
@@ -146,14 +158,6 @@ const {
   resetToDefaults
 } = useTableColumns('torrents', TORRENT_TABLE_COLUMNS)
 
-// 搜索防抖：300ms 后才更新过滤条件
-const updateSearch = useDebounceFn((value: string) => {
-  debouncedSearchQuery.value = value
-}, 300)
-
-// 监听搜索输入
-watch(searchQuery, (val) => updateSearch(val))
-
 // 添加种子对话框
 const showAddDialog = ref(false)
 const addLoading = ref(false)
@@ -225,10 +229,10 @@ function selectTorrentForDetail(hash: string, event?: Event) {
     return
   }
   
-  if (isShiftClick && selectedHashes.value.size > 0) {
+  if (isShiftClick && uiState.selection.size > 0) {
     // Shift+点击：范围选择
     const allTorrents = sortedTorrents.value
-    const lastSelected = Array.from(selectedHashes.value)[selectedHashes.value.size - 1]
+    const lastSelected = Array.from(uiState.selection)[uiState.selection.size - 1]
     const currentIndex = allTorrents.findIndex(t => t.id === hash)
     const lastIndex = allTorrents.findIndex(t => t.id === lastSelected)
     
@@ -236,10 +240,10 @@ function selectTorrentForDetail(hash: string, event?: Event) {
       const start = Math.min(currentIndex, lastIndex)
       const end = Math.max(currentIndex, lastIndex)
       
-      selectedHashes.value.clear()
+      uiState.selection.clear()
       for (let i = start; i <= end; i++) {
         const t = allTorrents[i]
-        if (t) selectedHashes.value.add(t.id)
+        if (t) uiState.selection.add(t.id)
       }
     }
     return
@@ -250,8 +254,8 @@ function selectTorrentForDetail(hash: string, event?: Event) {
   showDetailPanel.value = true
   
   // 单选模式
-  selectedHashes.value.clear()
-  selectedHashes.value.add(hash)
+  uiState.selection.clear()
+  uiState.selection.add(hash)
 }
 
 // 关闭详情面板
@@ -259,6 +263,15 @@ function closeDetailPanel() {
   showDetailPanel.value = false
   selectedTorrent.value = null
 }
+
+// Store 更新后同步底部面板展示的 torrent 引用；删除后自动关闭详情面板
+watch(() => torrentStore.torrents, () => {
+  const current = selectedTorrent.value
+  if (!current) return
+  const updated = torrentStore.torrents.get(current.id)
+  if (updated) selectedTorrent.value = updated
+  else closeDetailPanel()
+})
 
 // 调整面板高度
 function resizeDetailPanel(height: number) {
@@ -333,6 +346,8 @@ const handleResize = () => {
 
     const nextMobile = w < 768
     if (isMobile.value !== nextMobile) isMobile.value = nextMobile
+    const nextViewMode = nextMobile ? 'card' : 'list'
+    if (uiState.viewMode !== nextViewMode) uiState.viewMode = nextViewMode
 
     // 移动端自动折叠侧边栏
     if (nextMobile) sidebarCollapsed.value = true
@@ -341,12 +356,6 @@ const handleResize = () => {
     if (w >= 1120) searchPopoverOpen.value = false
   })
 }
-
-// 过滤器（支持暂停的二级分类）
-type StateFilter = 'all' | 'downloading' | 'seeding' | 'paused' | 'paused-completed' | 'paused-incomplete' | 'checking' | 'queued' | 'error'
-const stateFilter = ref<StateFilter>('all')
-const categoryFilter = ref<string>('all')
-const tagFilter = ref<string>('all')
 
 // 统计数据 - 优先使用 ServerState 的全局速度（后端不支持时回退到求和）
 const stats = computed(() => {
@@ -394,157 +403,27 @@ const stats = computed(() => {
   return result
 })
 
-// 过滤后的种子
-const filteredTorrents = computed(() => {
-  let result = torrentStore.torrents
-
-  // 状态过滤（支持暂停的二级分类）
-  if (stateFilter.value !== 'all') {
-    const filtered = new Map<string, UnifiedTorrent>()
-    for (const [hash, torrent] of result) {
-      // 一级状态匹配
-      if (torrent.state === stateFilter.value) {
-        filtered.set(hash, torrent)
-      }
-      // 暂停的二级分类
-      else if (stateFilter.value === 'paused-completed' && torrent.state === 'paused' && torrent.progress >= 1.0) {
-        filtered.set(hash, torrent)
-      }
-      else if (stateFilter.value === 'paused-incomplete' && torrent.state === 'paused' && torrent.progress < 1.0) {
-        filtered.set(hash, torrent)
-      }
-    }
-    result = filtered
-  }
-
-  // 分类过滤
-  if (categoryFilter.value !== 'all') {
-    const filtered = new Map<string, UnifiedTorrent>()
-    for (const [hash, torrent] of result) {
-      if (torrent.category === categoryFilter.value) {
-        filtered.set(hash, torrent)
-      }
-    }
-    result = filtered
-  }
-
-  // 标签过滤
-  if (tagFilter.value !== 'all') {
-    const filtered = new Map<string, UnifiedTorrent>()
-    for (const [hash, torrent] of result) {
-      if (torrent.tags?.includes(tagFilter.value)) {
-        filtered.set(hash, torrent)
-      }
-    }
-    result = filtered
-  }
-
-  // 搜索过滤（使用防抖后的搜索词）
-  if (debouncedSearchQuery.value) {
-    const query = debouncedSearchQuery.value.toLowerCase()
-    const filtered = new Map<string, UnifiedTorrent>()
-    for (const [hash, torrent] of result) {
-      if (torrent.name.toLowerCase().includes(query)) {
-        filtered.set(hash, torrent)
-      }
-    }
-    result = filtered
-  }
-
-  return result
-})
-
-// ========== 阶段 4: 排序功能 ==========
-
-// 排序字段和方向
-type SortField = 'name' | 'size' | 'progress' | 'dlSpeed' | 'upSpeed' | 'addedTime' | 'ratio' | 'eta'
-type SortDirection = 'asc' | 'desc'
-
-const sortField = ref<SortField>('name')
-const sortDirection = ref<SortDirection>('asc')
-
 watch(
-  [stateFilter, categoryFilter, tagFilter, debouncedSearchQuery, sortField, sortDirection],
+  [stateFilter, categoryFilter, tagFilter, debouncedFilter, () => uiState.sortBy, () => uiState.sortOrder],
   () => schedulePreserveTopAnchor(),
   { flush: 'pre' }
 )
-
-// 切换排序字段（表头点击）
-function toggleSort(field: SortField) {
-  if (sortField.value === field) {
-    sortDirection.value = sortDirection.value === 'asc' ? 'desc' : 'asc'
-  } else {
-    sortField.value = field
-    sortDirection.value = field === 'name' ? 'asc' : 'desc'
-  }
-}
-
-// 获取排序图标
-function getSortIcon(field: SortField): string {
-  if (sortField.value !== field) return ''
-  return sortDirection.value === 'asc' ? '↑' : '↓'
-}
-
-// 排序函数
-function compareTorrents(a: UnifiedTorrent, b: UnifiedTorrent): number {
-  // 下载中的永远优先（保持现有逻辑）
-  if (a.state === 'downloading' && b.state !== 'downloading') return -1
-  if (b.state === 'downloading' && a.state !== 'downloading') return 1
-
-  // 按选定字段排序
-  let compare = 0
-  switch (sortField.value) {
-    case 'name':
-      compare = a.name.localeCompare(b.name, 'zh-CN')
-      break
-    case 'size':
-      compare = a.size - b.size
-      break
-    case 'progress':
-      compare = a.progress - b.progress
-      break
-    case 'dlSpeed':
-      compare = a.dlspeed - b.dlspeed
-      break
-    case 'upSpeed':
-      compare = a.upspeed - b.upspeed
-      break
-    case 'addedTime':
-      compare = a.addedTime - b.addedTime
-      break
-    case 'ratio':
-      compare = a.ratio - b.ratio
-      break
-    case 'eta':
-      // eta = -1 表示无限大，应该排在最后
-      if (a.eta === -1 && b.eta === -1) compare = 0
-      else if (a.eta === -1) compare = 1
-      else if (b.eta === -1) compare = -1
-      else compare = a.eta - b.eta
-      break
-  }
-
-  return sortDirection.value === 'asc' ? compare : -compare
-}
-
-// 转换为数组并排序
-const sortedTorrents = computed(() => {
-  return Array.from(filteredTorrents.value.values()).sort(compareTorrents)
-})
 
 // 是否使用虚拟滚动（超过阈值时启用）
 const useVirtualScroll = computed(() => sortedTorrents.value.length >= VIRTUAL_SCROLL_THRESHOLD)
 const useMobileVirtualScroll = computed(() => sortedTorrents.value.length >= MOBILE_VIRTUAL_SCROLL_THRESHOLD)
 
+const selectedCount = computed(() => uiState.selection.size)
+
 const selectedBadge = computed<string | undefined>(() => {
-  const count = selectedHashes.value.size
+  const count = selectedCount.value
   if (count <= 0) return undefined
   return count > 99 ? '99+' : String(count)
 })
 
 const isAllSelected = computed(() => {
   const total = sortedTorrents.value.length
-  return total > 0 && selectedHashes.value.size === total
+  return total > 0 && selectedCount.value === total
 })
 
 function handleToolbarAction(actionId: string) {
@@ -597,16 +476,16 @@ function handleToolbarAction(actionId: string) {
 const toolbarPrimaryItems = computed<OverflowActionItem[]>(() => [
   { id: 'filter', title: '筛选', icon: 'panel-left', show: isMobile.value, pinned: true, priority: 0, group: 'main', groupLabel: '操作' },
   { id: 'add', title: '添加种子', icon: 'plus', variant: 'primary', pinned: true, priority: 0, group: 'main', groupLabel: '操作' },
-  { id: 'resume', title: '开始', icon: 'play', color: 'blue', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
-  { id: 'pause', title: '暂停', icon: 'pause', color: 'gray', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
-  { id: 'delete', title: '删除', icon: 'trash-2', variant: 'danger', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
+  { id: 'resume', title: '开始', icon: 'play', color: 'blue', disabled: selectedCount.value === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
+  { id: 'pause', title: '暂停', icon: 'pause', color: 'gray', disabled: selectedCount.value === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
+  { id: 'delete', title: '删除', icon: 'trash-2', variant: 'danger', disabled: selectedCount.value === 0, pinned: true, priority: 1, group: 'main', groupLabel: '操作' },
 ])
 
 const toolbarBatchItems = computed<OverflowActionItem[]>(() => [
-  { id: 'recheckSelected', title: '重新校验', icon: 'refresh-cw', disabled: selectedHashes.value.size === 0, pinned: true, priority: 0, group: 'batch', groupLabel: '批量' },
-  { id: 'reannounceSelected', title: '重新汇报', icon: 'radio', disabled: selectedHashes.value.size === 0, pinned: true, priority: 1, group: 'batch', groupLabel: '批量' },
-  { id: 'forceStartSelected', title: '强制开始', icon: 'zap', disabled: selectedHashes.value.size === 0, pinned: true, priority: 2, group: 'batch', groupLabel: '批量' },
-  { id: 'batchSpeedLimit', title: '批量限速', icon: 'sliders', disabled: selectedHashes.value.size === 0, pinned: true, priority: 3, group: 'batch', groupLabel: '批量' },
+  { id: 'recheckSelected', title: '重新校验', icon: 'refresh-cw', disabled: selectedCount.value === 0, pinned: true, priority: 0, group: 'batch', groupLabel: '批量' },
+  { id: 'reannounceSelected', title: '重新汇报', icon: 'radio', disabled: selectedCount.value === 0, pinned: true, priority: 1, group: 'batch', groupLabel: '批量' },
+  { id: 'forceStartSelected', title: '强制开始', icon: 'zap', disabled: selectedCount.value === 0, pinned: true, priority: 2, group: 'batch', groupLabel: '批量' },
+  { id: 'batchSpeedLimit', title: '批量限速', icon: 'sliders', disabled: selectedCount.value === 0, pinned: true, priority: 3, group: 'batch', groupLabel: '批量' },
 ])
 
 const toolbarSelectItems = computed<OverflowActionItem[]>(() => [
@@ -637,19 +516,7 @@ const useTwoRowToolbar = computed(() => windowWidth.value < 960)
 // 立即刷新函数（操作后调用）
 async function immediateRefresh() {
   try {
-    const result = await adapter.value.fetchList()
-    torrentStore.updateTorrents(result.torrents)
-    // 更新全局数据（分类、标签、服务器状态）
-    backendStore.updateGlobalData({
-      categories: result.categories,
-      tags: result.tags,
-      serverState: result.serverState
-    })
-    // 同步更新详情面板的种子引用（否则面板显示的是快照数据）
-    if (selectedTorrent.value) {
-      const updated = result.torrents.get(selectedTorrent.value.id)
-      if (updated) selectedTorrent.value = updated
-    }
+    await refreshList()
   } catch (error) {
     console.error('[Dashboard] Refresh failed:', error)
   }
@@ -658,19 +525,7 @@ async function immediateRefresh() {
 // 使用智能轮询（指数退避 + 熔断器 + 页面可见性监听 + 致命错误处理）
 const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
   fn: async () => {
-    const result = await adapter.value.fetchList()
-    torrentStore.updateTorrents(result.torrents)
-    // 更新全局数据（分类、标签、服务器状态）
-    backendStore.updateGlobalData({
-      categories: result.categories,
-      tags: result.tags,
-      serverState: result.serverState
-    })
-    // 同步更新详情面板的种子引用（保持面板数据与 Store 同步）
-    if (selectedTorrent.value) {
-      const updated = result.torrents.get(selectedTorrent.value.id)
-      if (updated) selectedTorrent.value = updated
-    }
+    await refreshList()
   },
   // 遇到 403 立即跳转登录
   onFatalError: (error) => {
@@ -705,68 +560,26 @@ const connectionLabel = computed(() => {
 
 const showToolbarConnection = computed(() => showSearchInput.value && !useTwoRowToolbar.value)
 
-function toggleSelect(hash: string) {
-  if (selectedHashes.value.has(hash)) {
-    selectedHashes.value.delete(hash)
-  } else {
-    selectedHashes.value.add(hash)
-  }
-}
-
 function selectAll() {
-  if (selectedHashes.value.size === sortedTorrents.value.length) {
-    selectedHashes.value.clear()
+  if (uiState.selection.size === sortedTorrents.value.length) {
+    uiState.selection.clear()
   } else {
     for (const [hash] of filteredTorrents.value) {
-      selectedHashes.value.add(hash)
+      uiState.selection.add(hash)
     }
   }
 }
 
 async function handlePause() {
-  await adapter.value.pause(Array.from(selectedHashes.value))
-  selectedHashes.value.clear()
-  await immediateRefresh()
+  await runTorrentAction('pause', Array.from(uiState.selection), { clearSelection: true })
 }
 
 async function handleResume() {
-  await adapter.value.resume(Array.from(selectedHashes.value))
-  selectedHashes.value.clear()
-  await immediateRefresh()
+  await runTorrentAction('resume', Array.from(uiState.selection), { clearSelection: true })
 }
 
 async function handleDelete() {
-  const count = selectedHashes.value.size
-  if (count === 0) return
-
-  // 获取种子名称（最多显示 3 个）
-  const names = Array.from(selectedHashes.value)
-    .map(h => torrentStore.torrents.get(h)?.name)
-    .filter(Boolean)
-    .slice(0, 3)
-
-  const nameList = names.join('、')
-  const moreText = count > 3 ? `等 ${count} 个种子` : `${count} 个种子`
-
-  // 询问是否删除文件
-  const deleteFiles = confirm(
-    `是否同时删除下载文件？\n\n种子：${nameList}${count > 3 ? '...' : ''}\n(${moreText})`
-  )
-
-  // 二次确认（如果删除文件）
-  if (deleteFiles) {
-    if (!confirm(`⚠️ 确定删除 ${moreText} 并同时删除下载文件吗？\n\n此操作不可恢复！`)) {
-      return
-    }
-  } else {
-    if (!confirm(`确定删除 ${moreText} 吗？\n（仅删除种子，保留文件）`)) {
-      return
-    }
-  }
-
-  await adapter.value.delete(Array.from(selectedHashes.value), deleteFiles)
-  selectedHashes.value.clear()
-  await immediateRefresh()
+  await runTorrentAction('delete', Array.from(uiState.selection), { clearSelection: true })
 }
 
 async function logout() {
@@ -793,37 +606,7 @@ async function handleAddTorrent(params: AddTorrentParams) {
 // 处理种子行操作（来自 TorrentRow 的 action 事件）
 async function handleTorrentAction(action: string, hash: string) {
   try {
-    switch (action) {
-      case 'pause':
-        await adapter.value.pause([hash])
-        break
-      case 'resume':
-        await adapter.value.resume([hash])
-        break
-      case 'recheck':
-        await adapter.value.recheck(hash)
-        break
-      case 'reannounce':
-        await adapter.value.reannounce(hash)
-        break
-      case 'forceStart':
-        await adapter.value.forceStart(hash, true)
-        break
-      case 'delete': {
-        const torrent = torrentStore.torrents.get(hash)
-        const deleteFiles = confirm(
-          `是否同时删除下载文件？\n\n种子：${torrent?.name || hash}`
-        )
-        if (deleteFiles) {
-          if (!confirm(`⚠️ 确定删除并删除文件吗？\n\n此操作不可恢复！`)) return
-        } else {
-          if (!confirm(`确定删除种子吗？\n（仅删除种子，保留文件）`)) return
-        }
-        await adapter.value.delete([hash], deleteFiles)
-        break
-      }
-    }
-    await immediateRefresh()
+    await runTorrentAction(action as TorrentAction, [hash])
   } catch (err) {
     console.error('[Dashboard] Action failed:', err)
     alert(err instanceof Error ? err.message : '操作失败')
@@ -835,8 +618,8 @@ function handleContextMenu(e: MouseEvent, hash: string) {
   e.preventDefault()
   e.stopPropagation()
 
-  const hashes = selectedHashes.value.has(hash)
-    ? Array.from(selectedHashes.value)
+  const hashes = uiState.selection.has(hash)
+    ? Array.from(uiState.selection)
     : [hash]
 
   contextmenuState.value = {
@@ -853,41 +636,6 @@ async function handleContextMenuAction(action: string, hashes: string[]) {
 
   try {
     switch (action) {
-      case 'pause':
-        await adapter.value.pause(hashes)
-        break
-      case 'resume':
-        await adapter.value.resume(hashes)
-        break
-      case 'delete': {
-        const count = hashes.length
-        const names = hashes
-          .map(h => torrentStore.torrents.get(h)?.name)
-          .filter(Boolean)
-          .slice(0, 3)
-        const nameList = names.join('、')
-        const moreText = count > 3 ? `等 ${count} 个种子` : `${count} 个种子`
-
-        const deleteFiles = confirm(
-          `是否同时删除下载文件？\n\n种子：${nameList}${count > 3 ? '...' : ''}\n(${moreText})`
-        )
-        if (deleteFiles) {
-          if (!confirm(`⚠️ 确定删除 ${moreText} 并同时删除下载文件吗？\n\n此操作不可恢复！`)) return
-        } else {
-          if (!confirm(`确定删除 ${moreText} 吗？\n（仅删除种子，保留文件）`)) return
-        }
-        await adapter.value.delete(hashes, deleteFiles)
-        break
-      }
-      case 'recheck':
-        await adapter.value.recheckBatch(hashes)
-        break
-      case 'reannounce':
-        await adapter.value.reannounceBatch(hashes)
-        break
-      case 'force-start':
-        await adapter.value.forceStartBatch(hashes, true)
-        break
       case 'set-category':
         // TODO: 打开分类选择对话框
         alert('设置分类功能开发中')
@@ -897,10 +645,9 @@ async function handleContextMenuAction(action: string, hashes: string[]) {
         alert('设置标签功能开发中')
         return
       default:
-        console.warn('[Dashboard] Unknown contextmenu action:', action)
+        await runTorrentAction(action as TorrentAction, hashes)
         return
     }
-    await immediateRefresh()
   } catch (err) {
     console.error('[Dashboard] Contextmenu action failed:', err)
     alert(err instanceof Error ? err.message : '操作失败')
@@ -909,12 +656,8 @@ async function handleContextMenuAction(action: string, hashes: string[]) {
 
 // 批量操作：重新校验选中项
 async function handleRecheckSelected() {
-  if (selectedHashes.value.size === 0) return
-  const hashes = Array.from(selectedHashes.value)
   try {
-    await adapter.value.recheckBatch(hashes)
-    selectedHashes.value.clear()
-    await immediateRefresh()
+    await runTorrentAction('recheck', Array.from(uiState.selection), { clearSelection: true })
   } catch (err) {
     console.error('[Dashboard] Recheck failed:', err)
     alert(err instanceof Error ? err.message : '重新校验失败')
@@ -923,12 +666,8 @@ async function handleRecheckSelected() {
 
 // 批量操作：强制开始选中项
 async function handleForceStartSelected() {
-  if (selectedHashes.value.size === 0) return
-  const hashes = Array.from(selectedHashes.value)
   try {
-    await adapter.value.forceStartBatch(hashes, true)
-    selectedHashes.value.clear()
-    await immediateRefresh()
+    await runTorrentAction('force-start', Array.from(uiState.selection), { clearSelection: true })
   } catch (err) {
     console.error('[Dashboard] Force start failed:', err)
     alert(err instanceof Error ? err.message : '强制开始失败')
@@ -937,12 +676,8 @@ async function handleForceStartSelected() {
 
 // 批量操作：重新汇报选中项
 async function handleReannounceSelected() {
-  if (selectedHashes.value.size === 0) return
-  const hashes = Array.from(selectedHashes.value)
   try {
-    await adapter.value.reannounceBatch(hashes)
-    selectedHashes.value.clear()
-    await immediateRefresh()
+    await runTorrentAction('reannounce', Array.from(uiState.selection), { clearSelection: true })
   } catch (err) {
     console.error('[Dashboard] Reannounce failed:', err)
     alert(err instanceof Error ? err.message : '重新汇报失败')
@@ -951,7 +686,7 @@ async function handleReannounceSelected() {
 
 // 批量操作：限速
 async function handleBatchSpeedLimit() {
-  if (selectedHashes.value.size === 0) return
+  if (uiState.selection.size === 0) return
 
   const dlLimitInput = prompt('下载限制 (KB/s, 留空或 0 表示不限制):')
   if (dlLimitInput === null) return
@@ -959,7 +694,7 @@ async function handleBatchSpeedLimit() {
   const upLimitInput = prompt('上传限制 (KB/s, 留空或 0 表示不限制):')
   if (upLimitInput === null) return
 
-  const hashes = Array.from(selectedHashes.value)
+  const hashes = Array.from(uiState.selection)
   try {
     const parseKbLimit = (raw: string) => {
       const text = raw.trim()
@@ -977,7 +712,7 @@ async function handleBatchSpeedLimit() {
     await adapter.value.setDownloadLimitBatch(hashes, dlLimit)
     await adapter.value.setUploadLimitBatch(hashes, upLimit)
 
-    selectedHashes.value.clear()
+    uiState.selection.clear()
     await immediateRefresh()
   } catch (err) {
     console.error('[Dashboard] Set speed limit failed:', err)
@@ -1123,7 +858,7 @@ onUnmounted(() => {
                       @click="categoryFilter = cat.name"
                       :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${categoryFilter === cat.name ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-100'}`">
                 <Icon name="folder" :size="14" />
-                <span class="truncate text-sm">{{ cat.name }}</span>
+                <SafeText as="span" class="truncate text-sm" :text="cat.name" />
               </button>
             </div>
           </div>
@@ -1139,7 +874,7 @@ onUnmounted(() => {
               <button v-for="tag in backendStore.tags" :key="tag"
                       @click="tagFilter = tag"
                       :class="`px-2 py-1 rounded text-xs font-medium transition-colors ${tagFilter === tag ? 'bg-black text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`">
-                {{ tag }}
+                <SafeText as="span" :text="tag" />
               </button>
             </div>
           </div>
@@ -1173,7 +908,7 @@ onUnmounted(() => {
               <div class="flex items-center">
                 <div v-if="showSearchInput" class="relative w-[clamp(9rem,14vw,14rem)] min-w-0">
                   <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                  <input v-model="searchQuery" type="text" placeholder="搜索种子名称..." class="input pl-10 py-2" />
+                  <input v-model="uiState.filter" type="text" placeholder="搜索种子名称..." class="input pl-10 py-2" />
                 </div>
 
                 <div v-else ref="searchPopoverRef" class="relative">
@@ -1190,7 +925,7 @@ onUnmounted(() => {
                           <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                           <input
                             ref="searchInputRef"
-                            v-model="searchQuery"
+                            v-model="uiState.filter"
                             type="text"
                             placeholder="搜索种子名称..."
                             class="input pl-10 py-2"
@@ -1255,7 +990,7 @@ onUnmounted(() => {
                             <Icon name="search" :size="16" class="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                             <input
                               ref="searchInputRef"
-                              v-model="searchQuery"
+                              v-model="uiState.filter"
                               type="text"
                               placeholder="搜索种子名称..."
                               class="input pl-10 py-2"
@@ -1303,28 +1038,28 @@ onUnmounted(() => {
         <!-- 种子列表容器：flex-1 自动填充剩余空间 -->
         <div class="flex-1 overflow-hidden min-h-0">
           <!-- 桌面端列表视图 -->
-          <div v-if="!isMobile" class="h-full min-h-0 flex flex-col">
+          <div v-if="uiState.viewMode === 'list'" class="h-full min-h-0 flex flex-col">
             <!-- 表头 -->
             <ResizableTableHeader
               :columns="columns"
               :resize-state="resizeState"
               @start-resize="(leftId, rightId, startX, snapshots) => startResize(leftId, rightId, startX, snapshots)"
-              @toggle-sort="(columnId) => toggleSort(columnId as SortField)"
+              @toggle-sort="(columnId) => toggleSortByColumn(columnId)"
             >
               <template #header-name="{ column }">
-                {{ column.label }} {{ getSortIcon('name') }}
+                {{ column.label }} {{ getSortIconForColumn('name') }}
               </template>
               <template #header-progress="{ column }">
-                {{ column.label }} {{ getSortIcon('progress') }}
+                {{ column.label }} {{ getSortIconForColumn('progress') }}
               </template>
               <template #header-dlSpeed="{ column }">
-                {{ column.label }} {{ getSortIcon('dlSpeed') }}
+                {{ column.label }} {{ getSortIconForColumn('dlSpeed') }}
               </template>
               <template #header-upSpeed="{ column }">
-                {{ column.label }} {{ getSortIcon('upSpeed') }}
+                {{ column.label }} {{ getSortIconForColumn('upSpeed') }}
               </template>
               <template #header-eta="{ column }">
-                {{ column.label }} {{ getSortIcon('eta') }}
+                {{ column.label }} {{ getSortIconForColumn('eta') }}
               </template>
             </ResizableTableHeader>
 
@@ -1338,7 +1073,7 @@ onUnmounted(() => {
               <VirtualTorrentList
                 v-if="useVirtualScroll && sortedTorrents.length > 0"
                 :torrents="sortedTorrents"
-                :selected-hashes="selectedHashes"
+                :selected-hashes="uiState.selection"
                 :columns="columns"
                 :scroll-element="tableScrollRef"
                 :is-resizing="resizeState.isResizing"
@@ -1354,7 +1089,7 @@ onUnmounted(() => {
                   v-for="torrent in sortedTorrents"
                   :key="torrent.id"
                   :torrent="torrent"
-                  :selected="selectedHashes.has(torrent.id)"
+                  :selected="uiState.selection.has(torrent.id)"
                   :columns="columns"
                   :is-resizing="resizeState.isResizing"
                   @click="selectTorrentForDetail(torrent.id, $event)"
@@ -1369,8 +1104,8 @@ onUnmounted(() => {
                 <div class="flex flex-col items-center gap-4">
                   <Icon name="inbox" :size="48" class="text-gray-300" />
                   <div class="text-gray-500">
-                    <p class="font-medium">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
-                    <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
+                    <p class="font-medium">{{ uiState.filter ? '未找到匹配的种子' : '暂无种子' }}</p>
+                    <p class="text-sm mt-1">{{ uiState.filter ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
                   </div>
                 </div>
               </div>
@@ -1383,8 +1118,8 @@ onUnmounted(() => {
             <div v-if="sortedTorrents.length === 0" class="text-center py-16">
               <Icon name="inbox" :size="64" class="text-gray-300 mx-auto mb-4" />
               <div class="text-gray-500">
-                <p class="font-medium text-base">{{ searchQuery ? '未找到匹配的种子' : '暂无种子' }}</p>
-                <p class="text-sm mt-1">{{ searchQuery ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
+                <p class="font-medium text-base">{{ uiState.filter ? '未找到匹配的种子' : '暂无种子' }}</p>
+                <p class="text-sm mt-1">{{ uiState.filter ? '尝试调整搜索关键词' : '添加种子后将在此处显示' }}</p>
               </div>
             </div>
 
@@ -1392,7 +1127,7 @@ onUnmounted(() => {
             <VirtualTorrentCardList
               v-if="useMobileVirtualScroll && sortedTorrents.length > 0"
               :torrents="sortedTorrents"
-              :selected-hashes="selectedHashes"
+              :selected-hashes="uiState.selection"
               :scroll-element="mobileScrollRef"
               @click="selectTorrentForDetail"
               @toggle-select="toggleSelect"
@@ -1403,7 +1138,7 @@ onUnmounted(() => {
                 v-for="torrent in sortedTorrents"
                 :key="torrent.id"
                 :torrent="torrent"
-                :selected="selectedHashes.has(torrent.id)"
+                :selected="uiState.selection.has(torrent.id)"
                 @click="selectTorrentForDetail(torrent.id)"
                 @toggle-select="toggleSelect($event.detail)"
                 @action="handleTorrentAction"

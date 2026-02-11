@@ -31,11 +31,26 @@ export interface BackendVersion {
   apiVersion?: string
   rpcSemver?: string
   features?: QbitFeatures        // API 特性标志
+  isUnknown?: boolean            // 版本是否未知（未认证/无权限/探测失败等）
+}
+
+function getEnv(): Record<string, any> {
+  // Vite runtime
+  const viteEnv = (import.meta as any).env
+  if (viteEnv) return viteEnv as Record<string, any>
+
+  // Non-Vite runtimes (e.g. Node tests)
+  if (typeof process !== 'undefined' && (process as any).env) {
+    return (process as any).env as Record<string, any>
+  }
+
+  return {}
 }
 
 // 从环境变量读取强制指定的后端类型
 function getForcedBackend(): BackendType | null {
-  const forced = import.meta.env.VITE_BACKEND_TYPE?.toLowerCase()
+  const env = getEnv()
+  const forced = String(env.VITE_BACKEND_TYPE ?? '').toLowerCase()
   if (forced === 'qbit') return 'qbit'
   if (forced === 'trans') return 'trans'
   // auto 或未设置 = 自动检测
@@ -63,26 +78,27 @@ function shouldUseProxy(): boolean {
   }
 }
 
-const BACKEND_TYPE_CACHE_KEY = 'webui_backend_type'
 const BACKEND_TYPE_CACHE_DURATION = 3600000 // 1小时
+type BackendTypeCache = { type: BackendType; timestamp: number }
+let backendTypeCache: BackendTypeCache | null = null
 
 /**
  * 探测后端类型（仅类型，不检测版本号，用于登录页）
  */
 export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType> {
-  // 尝试从缓存读取类型
-  try {
-    const cached = localStorage.getItem(BACKEND_TYPE_CACHE_KEY)
-    if (cached) {
-      const { type, timestamp } = JSON.parse(cached)
-      if (Date.now() - timestamp < BACKEND_TYPE_CACHE_DURATION) {
-        return type
-      }
-    }
-  } catch {}
+  // 强制覆盖：显式指定时不做探测（也覆盖缓存）
+  const forced = getForcedBackend()
+  if (forced) {
+    backendTypeCache = { type: forced, timestamp: Date.now() }
+    return forced
+  }
+
+  // 仅内存缓存：刷新页面即失效（按要求不使用 localStorage）
+  if (backendTypeCache && Date.now() - backendTypeCache.timestamp < BACKEND_TYPE_CACHE_DURATION) {
+    return backendTypeCache.type
+  }
 
   // 缓存未命中或过期，重新检测
-  const forced = getForcedBackend()
   const useProxy = shouldUseProxy()
   const baseURL = useProxy ? '' : getQbitBaseUrl()
   const detector = axios.create({ baseURL, timeout, withCredentials: false })
@@ -91,13 +107,7 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
   try {
     const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
     if (res.status === 200 || res.status === 403) {
-      // 缓存检测到的类型
-      try {
-        localStorage.setItem(BACKEND_TYPE_CACHE_KEY, JSON.stringify({
-          type: 'qbit',
-          timestamp: Date.now()
-        }))
-      } catch {}
+      backendTypeCache = { type: 'qbit', timestamp: Date.now() }
       return 'qbit'
     }
   } catch {}
@@ -109,19 +119,13 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
       headers: { 'Content-Type': 'application/json' }
     })
     if (res.status === 409 || res.status === 200) {
-      // 缓存检测到的类型
-      try {
-        localStorage.setItem(BACKEND_TYPE_CACHE_KEY, JSON.stringify({
-          type: 'trans',
-          timestamp: Date.now()
-        }))
-      } catch {}
+      backendTypeCache = { type: 'trans', timestamp: Date.now() }
       return 'trans'
     }
   } catch {}
 
-  // 保守策略：返回环境变量指定的类型或默认 qBittorrent
-  return forced || 'qbit'
+  // 保守策略：默认 qBittorrent
+  return 'qbit'
 }
 
 /**
@@ -129,10 +133,87 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
  * 此函数会携带凭证，用于登录后获取真实版本号
  */
 export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<BackendVersion> {
+  const forced = getForcedBackend()
+
   // 使用 silentApiClient 来携带已登录的 cookie，但不会在 403 时抛出 AuthError
   const { silentApiClient } = await import('@/api/client')
 
-  // 尝试 qBittorrent
+  // 强制 qBittorrent：只尝试 qB
+  if (forced === 'qbit') {
+    try {
+      const res = await silentApiClient.get('/api/v2/app/version', { validateStatus: () => true })
+      if (res.status === 200 || res.status === 403) {
+        const version = res.status === 200 ? String(res.data).trim() : 'unknown'
+        const parsed = parseVersion(version)
+
+        let apiVersion: string | undefined
+        if (res.status === 200) {
+          try {
+            const apiRes = await silentApiClient.get('/api/v2/app/webapiVersion')
+            apiVersion = String(apiRes.data).trim()
+          } catch {}
+        }
+
+        const isUnknown = res.status === 403 || version === 'unknown'
+
+        return {
+          type: 'qbit',
+          version,
+          ...parsed,
+          apiVersion,
+          features: isUnknown ? undefined : detectQbitFeatures(version, apiVersion),
+          isUnknown
+        }
+      }
+    } catch {}
+
+    return {
+      type: 'qbit',
+      version: 'unknown',
+      major: 4,
+      minor: 0,
+      patch: 0,
+      isUnknown: true
+    }
+  }
+
+  // 强制 Transmission：只尝试 TR
+  if (forced === 'trans') {
+    try {
+      const { transClient } = await import('@/api/trans-client')
+      const res = await transClient.post('', { method: 'session-get' })
+
+      let version = 'unknown'
+      let rpcSemver: string | undefined
+
+      if (res.data?.arguments) {
+        version = res.data.arguments.version || 'unknown'
+        rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
+      }
+
+      const parsed = parseVersion(version)
+      const isUnknown = version === 'unknown'
+
+      return {
+        type: 'trans',
+        version,
+        ...parsed,
+        rpcSemver,
+        isUnknown
+      }
+    } catch {}
+
+    return {
+      type: 'trans',
+      version: 'unknown',
+      major: 0,
+      minor: 0,
+      patch: 0,
+      isUnknown: true
+    }
+  }
+
+  // 自动探测：优先尝试 qBittorrent
   try {
     const res = await silentApiClient.get('/api/v2/app/version', { validateStatus: () => true })
     if (res.status === 200 || res.status === 403) {
@@ -158,7 +239,7 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
         apiVersion,
         features: isUnknown ? undefined : detectQbitFeatures(version, apiVersion),
         isUnknown
-      } as BackendVersion & { isUnknown?: boolean }
+      }
     }
   } catch {}
 
@@ -184,19 +265,18 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
       ...parsed,
       rpcSemver,
       isUnknown
-    } as BackendVersion & { isUnknown?: boolean }
+    }
   } catch {}
 
   // 保守策略：检测失败返回 qBittorrent v4
-  const forced = getForcedBackend()
   return {
-    type: forced || 'qbit',
+    type: 'qbit',
     version: 'unknown',
     major: 4,
     minor: 0,
     patch: 0,
     isUnknown: true
-  } as BackendVersion & { isUnknown?: boolean }
+  }
 }
 
 /**
@@ -209,7 +289,86 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
 
   const detector = axios.create({ baseURL, timeout, withCredentials: false })
 
-  // 尝试 qBittorrent
+  // 强制 qBittorrent：只尝试 qB
+  if (forced === 'qbit') {
+    try {
+      const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
+      if (res.status === 200 || res.status === 403) {
+        const version = res.status === 200 ? String(res.data).trim() : 'unknown'
+        const parsed = parseVersion(version)
+
+        let apiVersion: string | undefined
+        if (res.status === 200) {
+          try {
+            const apiRes = await detector.get('/api/v2/app/webapiVersion')
+            apiVersion = String(apiRes.data).trim()
+          } catch {}
+        }
+
+        const isUnknown = res.status === 403 || version === 'unknown'
+
+        return {
+          type: 'qbit',
+          version,
+          ...parsed,
+          apiVersion,
+          features: isUnknown ? undefined : detectQbitFeatures(version, apiVersion),
+          isUnknown
+        }
+      }
+    } catch {}
+
+    return {
+      type: 'qbit',
+      version: 'unknown',
+      major: 4,
+      minor: 0,
+      patch: 0,
+      isUnknown: true
+    }
+  }
+
+  // 强制 Transmission：只尝试 TR
+  if (forced === 'trans') {
+    try {
+      const res = await detector.post('/transmission/rpc', { method: 'session-get' }, {
+        validateStatus: () => true,
+        headers: { 'Content-Type': 'application/json' }
+      })
+
+      if (res.status === 409 || res.status === 200) {
+        let version = 'unknown'
+        let rpcSemver: string | undefined
+
+        if (res.status === 200 && res.data?.arguments) {
+          version = res.data.arguments.version || 'unknown'
+          rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
+        }
+
+        const parsed = parseVersion(version)
+        const isUnknown = res.status === 409 || version === 'unknown'
+
+        return {
+          type: 'trans',
+          version,
+          ...parsed,
+          rpcSemver,
+          isUnknown
+        }
+      }
+    } catch {}
+
+    return {
+      type: 'trans',
+      version: 'unknown',
+      major: 0,
+      minor: 0,
+      patch: 0,
+      isUnknown: true
+    }
+  }
+
+  // 自动探测：尝试 qBittorrent
   try {
     const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
     if (res.status === 200 || res.status === 403) {
@@ -235,7 +394,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
         apiVersion,
         features: isUnknown ? undefined : detectQbitFeatures(version, apiVersion),
         isUnknown  // 添加标记，未认证时为 true
-      } as BackendVersion & { isUnknown?: boolean }
+      }
     }
   } catch {}
 
@@ -264,19 +423,19 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
         ...parsed,
         rpcSemver,
         isUnknown  // 添加标记
-      } as BackendVersion & { isUnknown?: boolean }
+      }
     }
   } catch {}
 
   // 保守策略：检测失败返回 qBittorrent v4
   return {
-    type: forced || 'qbit',
+    type: 'qbit',
     version: 'unknown',
     major: 4,
     minor: 0,
     patch: 0,
     isUnknown: true  // 明确标记为未知
-  } as BackendVersion & { isUnknown?: boolean }
+  }
 }
 
 /**

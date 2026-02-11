@@ -5,6 +5,7 @@ import type { ColumnState } from '@/composables/useTableColumns/types'
 import { formatBytes, formatSpeed } from '@/utils/format'
 import { getSwarmTexts, getSwarmTitle } from '@/utils/swarm'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 
 const props = defineProps<{
   torrent: UnifiedTorrent
@@ -161,9 +162,11 @@ const formatETA = (eta: number, progress: number, state: TorrentState): string =
 
         <!-- 名称与基本信息 -->
         <div class="min-w-0 flex-1">
-          <div class="font-medium text-gray-900 truncate text-sm leading-5">
-            {{ torrent.name }}
-          </div>
+          <SafeText
+            as="div"
+            class="font-medium text-gray-900 truncate text-sm leading-5"
+            :text="torrent.name"
+          />
           <div class="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
             <span class="font-mono">{{ formatBytes(torrent.size) }}</span>
             <span class="hidden sm:inline">•</span>

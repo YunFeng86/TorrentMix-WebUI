@@ -4,7 +4,7 @@
  * 功能:
  * - 列状态管理 (宽度、可见性)
  * - 拖拽调整列宽 (RAF 限流到 60fps)
- * - localStorage 持久化
+ * - localStorage 持久化（仅 UI 偏好，不涉及敏感数据）
  * - 最小宽度限制
  * - 重置为默认值
  *
@@ -19,10 +19,22 @@ import type { ColumnDefinition, ColumnState, ColumnResizeState, StoredColumnConf
 
 const STORAGE_PREFIX = 'table-columns-'
 
+// Fallback cache: used when localStorage is not available (SSR/Node tests/private mode).
+const inMemoryConfigs = new Map<string, StoredColumnConfig>()
+
+function getLocalStorage(): Storage | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
 export function useTableColumns(tableId: string, definitions: ColumnDefinition[]) {
   // ========== 状态初始化 ==========
 
-  // 从 localStorage 加载配置
+  // 从 localStorage（或内存 fallback）加载配置
   const stored = loadFromStorage(tableId)
 
   // 列状态 (响应式)
@@ -184,7 +196,7 @@ export function useTableColumns(tableId: string, definitions: ColumnDefinition[]
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
 
-    // 保存到 localStorage
+    // 保存到会话内存
     saveToStorage(tableId, columns.value)
   }
 
@@ -217,13 +229,16 @@ export function useTableColumns(tableId: string, definitions: ColumnDefinition[]
       currentWidth: def.defaultWidth,
       visible: true
     }))
-    localStorage.removeItem(STORAGE_PREFIX + tableId)
+    const storage = getLocalStorage()
+    if (storage) storage.removeItem(STORAGE_PREFIX + tableId)
+    else inMemoryConfigs.delete(tableId)
   }
 
   // ========== 持久化 ==========
 
-  // 监听变化并保存 (防抖: 只在 resize 结束时保存)
+  // 监听变化并保存：拖拽过程中高频更新，仅在非拖拽时写入 localStorage
   watch(columns, () => {
+    if (resizeState.value.isResizing) return
     saveToStorage(tableId, columns.value)
   }, { deep: true })
 
@@ -252,13 +267,16 @@ export function useTableColumns(tableId: string, definitions: ColumnDefinition[]
 // ========== 工具函数 ==========
 
 /**
- * 从 localStorage 加载配置
+ * 从 localStorage（或内存 fallback）加载配置
  */
 function loadFromStorage(tableId: string): StoredColumnConfig {
+  const storage = getLocalStorage()
+  if (!storage) return inMemoryConfigs.get(tableId) ?? {}
+
   try {
-    const raw = localStorage.getItem(STORAGE_PREFIX + tableId)
+    const raw = storage.getItem(STORAGE_PREFIX + tableId)
     if (!raw) return {}
-    return JSON.parse(raw)
+    return JSON.parse(raw) as StoredColumnConfig
   } catch (e) {
     console.warn('[useTableColumns] Failed to load config:', e)
     return {}
@@ -266,18 +284,25 @@ function loadFromStorage(tableId: string): StoredColumnConfig {
 }
 
 /**
- * 保存配置到 localStorage
+ * 保存配置到 localStorage（或内存 fallback）
  */
 function saveToStorage(tableId: string, columns: ColumnState[]) {
+  const config: StoredColumnConfig = {}
+  for (const col of columns) {
+    config[col.id] = {
+      width: col.currentWidth,
+      visible: col.visible
+    }
+  }
+
+  const storage = getLocalStorage()
+  if (!storage) {
+    inMemoryConfigs.set(tableId, config)
+    return
+  }
+
   try {
-    const config: StoredColumnConfig = {}
-    columns.forEach((col: ColumnState) => {
-      config[col.id] = {
-        width: col.currentWidth,
-        visible: col.visible
-      }
-    })
-    localStorage.setItem(STORAGE_PREFIX + tableId, JSON.stringify(config))
+    storage.setItem(STORAGE_PREFIX + tableId, JSON.stringify(config))
   } catch (e) {
     console.warn('[useTableColumns] Failed to save config:', e)
   }

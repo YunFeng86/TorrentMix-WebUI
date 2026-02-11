@@ -3,6 +3,7 @@ import { ref, watch, computed } from 'vue'
 import type { AddTorrentParams } from '@/adapter/interface'
 import { useBackendStore } from '@/store/backend'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 
 interface Props {
   open: boolean
@@ -275,7 +276,7 @@ async function handleSubmit() {
                         :key="index"
                         class="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-sm"
                       >
-                        {{ tag }}
+                        <SafeText as="span" :text="tag" />
                         <button
                           @click="removeTag(index)"
                           class="hover:text-red-500 transition-colors"

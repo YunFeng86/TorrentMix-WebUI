@@ -1,0 +1,94 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { createPinia, setActivePinia } from 'pinia'
+
+import { useAuthStore } from '../src/store/auth.ts'
+import { useBackendStore } from '../src/store/backend.ts'
+
+test('auth: login sets authenticated and initializes backend adapter (injected deps)', async () => {
+  setActivePinia(createPinia())
+
+  const auth = useAuthStore()
+  const backend = useBackendStore()
+
+  const deps = {
+    detectBackendTypeOnly: async () => 'qbit' as const,
+    detectBackendWithVersionAuth: async () => ({
+      type: 'qbit' as const,
+      version: '5.0.0',
+      major: 5,
+      minor: 0,
+      patch: 0,
+    }),
+    createAdapterByType: async () => ({
+      login: async () => {},
+      logout: async () => {},
+      checkSession: async () => true,
+      fetchList: async () => ({ torrents: new Map() }),
+      addTorrent: async () => {},
+      pause: async () => {},
+      resume: async () => {},
+      delete: async () => {},
+      fetchDetail: async () => { throw new Error('not used') },
+      recheck: async () => {},
+      recheckBatch: async () => {},
+      reannounce: async () => {},
+      reannounceBatch: async () => {},
+      forceStart: async () => {},
+      forceStartBatch: async () => {},
+      setDownloadLimit: async () => {},
+      setDownloadLimitBatch: async () => {},
+      setUploadLimit: async () => {},
+      setUploadLimitBatch: async () => {},
+      setLocation: async () => {},
+      setCategory: async () => {},
+      setCategoryBatch: async () => {},
+      setTags: async () => {},
+      setTagsBatch: async () => {},
+      getTransferSettings: async () => ({}) as any,
+      setTransferSettings: async () => {},
+      getCapabilities: async () => ({}) as any,
+      getPreferences: async () => ({}) as any,
+      setPreferences: async () => {},
+      getCategories: async () => new Map(),
+      createCategory: async () => {},
+      editCategory: async () => {},
+      deleteCategories: async () => {},
+      setCategorySavePath: async () => {},
+      getTags: async () => [],
+      createTags: async () => {},
+      deleteTags: async () => {},
+    }),
+    saveVersionCache: () => {},
+    clearVersionCache: () => {},
+    QbitAdapter: class QbitAdapterMock {
+      constructor(_features: unknown) {}
+    } as any,
+    DEFAULT_QBIT_FEATURES: {},
+    TransAdapter: class TransAdapterMock {} as any,
+  } as const
+
+  await auth.login('u', 'p', deps as any)
+
+  assert.equal(auth.isAuthenticated, true)
+  assert.ok(backend.adapter)
+  assert.equal(backend.backendType, 'qbit')
+  assert.equal(backend.version?.major, 5)
+})
+
+test('auth: logout calls adapter.logout and clears authenticated flag', async () => {
+  setActivePinia(createPinia())
+
+  const auth = useAuthStore()
+  const backend = useBackendStore()
+
+  let called = 0
+  backend.adapter = { logout: async () => { called++ } } as any
+  auth.isAuthenticated = true as any
+
+  await auth.logout()
+
+  assert.equal(called, 1)
+  assert.equal(auth.isAuthenticated, false)
+})
+

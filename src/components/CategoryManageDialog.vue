@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { Category } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 
 const backendStore = useBackendStore()
 const adapter = computed(() => backendStore.adapter!)
@@ -190,7 +191,7 @@ onMounted(() => {
             class="flex items-center gap-3 p-3 border rounded hover:bg-gray-50"
           >
             <Icon name="folder" :size="16" class="text-gray-400" />
-            <span class="flex-1 font-medium">{{ name }}</span>
+            <SafeText as="span" class="flex-1 font-medium" :text="name" />
             <span class="text-sm text-gray-500 truncate max-w-[40vw] sm:max-w-[200px]">
               {{ cat.savePath || '默认路径' }}
             </span>

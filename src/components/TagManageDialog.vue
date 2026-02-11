@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import Icon from '@/components/Icon.vue'
+import SafeText from '@/components/SafeText.vue'
 
 const backendStore = useBackendStore()
 const adapter = backendStore.adapter!
@@ -114,7 +115,7 @@ onMounted(() => {
             class="inline-flex items-center gap-1 px-3 py-1 bg-gray-100 rounded-full text-sm"
           >
             <Icon name="tag" :size="12" class="text-gray-400" />
-            {{ tag }}
+            <SafeText as="span" :text="tag" />
             <button
               @click="handleDelete(tag)"
               class="ml-1 p-0.5 hover:bg-gray-200 rounded"

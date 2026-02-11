@@ -4,7 +4,8 @@ import { detectBackendWithVersion } from './detect'
 import { QbitAdapter, DEFAULT_QBIT_FEATURES } from './qbit'
 import { TransAdapter } from './trans/index'
 
-const VERSION_CACHE_KEY = 'webui_backend_version'
+// 仅内存缓存：刷新页面即失效（按要求不使用 localStorage）
+let versionCache: CachedVersion | null = null
 
 export interface CachedVersion extends BackendVersion {
   timestamp: number
@@ -12,7 +13,7 @@ export interface CachedVersion extends BackendVersion {
 }
 
 function resolveQbitFeatures(
-  version: BackendVersion & { isUnknown?: boolean }
+  version: BackendVersion
 ): QbitFeatures {
   if (version.type !== 'qbit') return DEFAULT_QBIT_FEATURES
   if (version.isUnknown) return DEFAULT_QBIT_FEATURES
@@ -30,7 +31,7 @@ function resolveQbitFeatures(
 }
 
 export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: BackendVersion }> {
-  let version: BackendVersion & { isUnknown?: boolean }
+  let version: BackendVersion
 
   // 尝试从缓存加载（但跳过未知版本）
   const cached = loadVersionCache()
@@ -73,7 +74,7 @@ export async function createAdapterByType(
 }
 
 export async function refreshVersion(): Promise<BackendVersion> {
-  const version = await detectBackendWithVersion() as BackendVersion & { isUnknown?: boolean }
+  const version = await detectBackendWithVersion()
   if (!version.isUnknown) {
     saveVersionCache(version)
   }
@@ -81,23 +82,14 @@ export async function refreshVersion(): Promise<BackendVersion> {
 }
 
 function loadVersionCache(): CachedVersion | null {
-  try {
-    const cached = localStorage.getItem(VERSION_CACHE_KEY)
-    return cached ? JSON.parse(cached) : null
-  } catch {
-    return null
-  }
+  return versionCache
 }
 
-export function saveVersionCache(version: BackendVersion & { isUnknown?: boolean }): void {
-  try {
-    const cached: CachedVersion = { ...version, timestamp: Date.now() }
-    localStorage.setItem(VERSION_CACHE_KEY, JSON.stringify(cached))
-  } catch {}
+export function saveVersionCache(version: BackendVersion): void {
+  const cached: CachedVersion = { ...version, timestamp: Date.now() }
+  versionCache = cached
 }
 
 export function clearVersionCache(): void {
-  try {
-    localStorage.removeItem(VERSION_CACHE_KEY)
-  } catch {}
+  versionCache = null
 }
