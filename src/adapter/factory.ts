@@ -1,6 +1,6 @@
 import type { BaseAdapter } from './interface'
 import type { BackendVersion, QbitFeatures } from './detect'
-import { detectBackendWithVersion } from './detect'
+import { detectBackendWithVersion, detectBackendWithVersionAuth } from './detect'
 import { QbitAdapter, DEFAULT_QBIT_FEATURES } from './qbit'
 import { TransAdapter } from './trans/index'
 
@@ -64,7 +64,6 @@ export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: 
  * 此时需要二次探测以获得正确的 features（例如 qB v5 的 stop/start 端点）。
  */
 export async function rebootAdapterWithAuth(): Promise<{ adapter: BaseAdapter; version: BackendVersion }> {
-  const { detectBackendWithVersionAuth } = await import('./detect')
   const version = await detectBackendWithVersionAuth()
 
   // 仅缓存已知版本

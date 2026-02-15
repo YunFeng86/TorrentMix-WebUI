@@ -57,7 +57,7 @@ export interface ServerState {
   upInfoSpeed: number;
   dlRateLimit: number;
   upRateLimit: number;
-  connectionStatus: 'connected' | 'disconnected';
+  connectionStatus: 'connected' | 'firewalled' | 'disconnected';
   peers: number;
   freeSpaceOnDisk: number;
   useAltSpeed: boolean;
@@ -94,14 +94,14 @@ export interface QBTorrent {
 // qBittorrent sync/maindata 响应
 export interface QBSyncResponse {
   rid: number;
-  full_update: boolean;
-  torrents: Record<string, Partial<QBTorrent>>;
-  torrents_removed: string[];
-  categories: Record<string, { savePath: string }>;
-  categories_removed: string[];
-  tags: string[];
-  tags_removed: string[];
-  server_state: QBServerState;
+  full_update?: boolean;
+  torrents?: Record<string, Partial<QBTorrent>>;
+  torrents_removed?: string[];
+  categories?: Record<string, { savePath: string }>;
+  categories_removed?: string[];
+  tags?: string[];
+  tags_removed?: string[];
+  server_state?: QBServerState;
 }
 
 // qBittorrent server_state 结构

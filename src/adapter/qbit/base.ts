@@ -63,17 +63,32 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         }
       }
 
-      for (const [name, cat] of Object.entries(data.categories || {})) {
-        this.currentCategories.set(name, { name, savePath: cat.savePath })
-      }
-      for (const name of data.categories_removed || []) {
-        this.currentCategories.delete(name)
-      }
+      // categories/tags 在 full_update 时应视为快照；否则增量合并
+      // 防御：部分后端可能在 full_update 时省略字段（undefined），此时不应把缓存“误清空”导致 UI 闪白。
+      if (data.full_update) {
+        if (data.categories !== undefined) {
+          const categories = new Map<string, Category>()
+          for (const [name, cat] of Object.entries(data.categories || {})) {
+            categories.set(name, { name, savePath: cat.savePath })
+          }
+          this.currentCategories = categories
+        }
+        if (data.tags !== undefined) {
+          this.currentTags = Array.from(new Set(data.tags || []))
+        }
+      } else {
+        for (const [name, cat] of Object.entries(data.categories || {})) {
+          this.currentCategories.set(name, { name, savePath: cat.savePath })
+        }
+        for (const name of data.categories_removed || []) {
+          this.currentCategories.delete(name)
+        }
 
-      const tagSet = new Set(this.currentTags)
-      for (const tag of data.tags || []) tagSet.add(tag)
-      for (const tag of data.tags_removed || []) tagSet.delete(tag)
-      this.currentTags = Array.from(tagSet)
+        const tagSet = new Set(this.currentTags)
+        for (const tag of data.tags || []) tagSet.add(tag)
+        for (const tag of data.tags_removed || []) tagSet.delete(tag)
+        this.currentTags = Array.from(tagSet)
+      }
 
       // ServerState 增量更新（类似种子的处理逻辑）
       if (data.server_state) {
@@ -143,13 +158,19 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         }
         this.currentMap = map
 
-        // 重置时更新 serverState
-        if (data.server_state) {
-          const normalized = this.normalizeServerState(data.server_state)
-          if (normalized) {
-            this.currentServerState = normalized
+        // rid 重置视为全量更新：重建 categories/tags/serverState，避免残留“幽灵数据”
+        if (data.categories !== undefined) {
+          this.currentCategories = new Map()
+          for (const [name, cat] of Object.entries(data.categories || {})) {
+            this.currentCategories.set(name, { name, savePath: cat.savePath })
           }
         }
+        if (data.tags !== undefined) {
+          this.currentTags = Array.from(new Set(data.tags || []))
+        }
+
+        const normalized = this.normalizeServerState(data.server_state)
+        this.currentServerState = normalized ?? null
 
         return {
           torrents: this.currentMap,
@@ -458,13 +479,13 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
 
   async getTransferSettings(): Promise<TransferSettings> {
     const res = await apiClient.get<QBSyncResponse>('/api/v2/sync/maindata', { params: { rid: 0 } })
-    const state = res.data.server_state
+    const state = this.normalizeServerState(res.data.server_state)
     return {
-      downloadLimit: (state.dl_rate_limit as number) ?? 0,
-      uploadLimit: (state.up_rate_limit as number) ?? 0,
-      altEnabled: (state.use_alt_speed as boolean) ?? false,
-      altDownloadLimit: (state.alt_dl_limit as number) ?? 0,
-      altUploadLimit: (state.alt_up_limit as number) ?? 0
+      downloadLimit: state?.dlRateLimit ?? 0,
+      uploadLimit: state?.upRateLimit ?? 0,
+      altEnabled: state?.useAltSpeed ?? false,
+      altDownloadLimit: state?.altDlLimit ?? 0,
+      altUploadLimit: state?.altUpLimit ?? 0
     }
   }
 
@@ -648,12 +669,13 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   protected normalizeServerState(raw: unknown): ServerState | undefined {
     if (!raw || typeof raw !== 'object') return undefined
     const state = raw as Record<string, unknown>
+    const conn = String(state.connection_status ?? '')
     return {
       dlInfoSpeed: (state.dl_info_speed as number) ?? 0,
       upInfoSpeed: (state.up_info_speed as number) ?? 0,
       dlRateLimit: (state.dl_rate_limit as number) ?? 0,
       upRateLimit: (state.up_rate_limit as number) ?? 0,
-      connectionStatus: (state.connection_status as string) === 'connected' ? 'connected' : 'disconnected',
+      connectionStatus: conn === 'connected' ? 'connected' : conn === 'firewalled' ? 'firewalled' : 'disconnected',
       peers: (state.peers as number) ?? 0,
       freeSpaceOnDisk: (state.free_space_on_disk as number) ?? 0,
       useAltSpeed: (state.use_alt_speed as boolean) ?? false,
@@ -670,6 +692,8 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     }
 
     const rawAny = raw as Record<string, unknown>
+    const hasCategory = 'category' in rawAny
+    const hasTags = 'tags' in rawAny
 
     // 注意：sync/maindata 增量更新时，字段可能缺失；区分“字段缺失”和“值为 0”。
     const hasConnectedSeeds = 'num_seeds' in rawAny
@@ -697,8 +721,11 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       ratio: raw.ratio ?? existing?.ratio ?? 0,
       addedTime: raw.added_on ?? existing?.addedTime ?? 0,
       savePath: raw.save_path ?? existing?.savePath ?? '',
-      category: raw.category || existing?.category,
-      tags: raw.tags ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : existing?.tags,
+      // qB 的 category/tags：字段存在且为空字符串时表示“清空”，不能用 truthy 判断（会导致幽灵数据）
+      category: hasCategory ? (typeof raw.category === 'string' ? raw.category : '') : existing?.category,
+      tags: hasTags
+        ? (typeof raw.tags === 'string' ? raw.tags.split(',').map(t => t.trim()).filter(Boolean) : [])
+        : existing?.tags,
       connectedSeeds,
       connectedPeers,
       totalSeeds,

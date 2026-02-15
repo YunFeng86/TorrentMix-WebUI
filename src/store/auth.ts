@@ -2,7 +2,10 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { useBackendStore } from './backend'
 import type { BaseAdapter } from '@/adapter/interface'
-import type { BackendType, BackendVersion } from '@/adapter/detect'
+import { detectBackendTypeOnly, detectBackendWithVersionAuth, type BackendType, type BackendVersion } from '@/adapter/detect'
+import { createAdapterByType, saveVersionCache, clearVersionCache, createAdapter, rebootAdapterWithAuth } from '@/adapter/factory'
+import { QbitAdapter, DEFAULT_QBIT_FEATURES } from '@/adapter/qbit'
+import { TransAdapter } from '@/adapter/trans/index'
 
 type LoginDeps = {
   detectBackendTypeOnly: (timeout?: number) => Promise<BackendType>
@@ -20,21 +23,20 @@ type CheckSessionDeps = {
   rebootAdapterWithAuth: () => Promise<{ adapter: BaseAdapter; version: BackendVersion }>
 }
 
-async function loadLoginDeps(): Promise<LoginDeps> {
-  const { detectBackendTypeOnly, detectBackendWithVersionAuth } = await import('@/adapter/detect')
-  const { createAdapterByType, saveVersionCache, clearVersionCache } = await import('@/adapter/factory')
-  const { QbitAdapter, DEFAULT_QBIT_FEATURES } = await import('@/adapter/qbit')
-  const { TransAdapter } = await import('@/adapter/trans/index')
-  return {
-    detectBackendTypeOnly,
-    detectBackendWithVersionAuth,
-    createAdapterByType,
-    saveVersionCache,
-    clearVersionCache,
-    QbitAdapter,
-    DEFAULT_QBIT_FEATURES,
-    TransAdapter,
-  }
+const DEFAULT_LOGIN_DEPS: LoginDeps = {
+  detectBackendTypeOnly,
+  detectBackendWithVersionAuth,
+  createAdapterByType,
+  saveVersionCache,
+  clearVersionCache,
+  QbitAdapter: QbitAdapter as any,
+  DEFAULT_QBIT_FEATURES,
+  TransAdapter: TransAdapter as any,
+}
+
+const DEFAULT_CHECK_SESSION_DEPS: CheckSessionDeps = {
+  createAdapter,
+  rebootAdapterWithAuth,
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -42,14 +44,9 @@ export const useAuthStore = defineStore('auth', () => {
   const isChecking = ref(false)
   const isInitializing = ref(false)
 
-  async function loadCheckSessionDeps(): Promise<CheckSessionDeps> {
-    const { createAdapter, rebootAdapterWithAuth } = await import('@/adapter/factory')
-    return { createAdapter, rebootAdapterWithAuth }
-  }
-
   async function login(username: string, password: string, deps?: LoginDeps) {
     const backendStore = useBackendStore()
-    const d = deps ?? await loadLoginDeps()
+    const d = deps ?? DEFAULT_LOGIN_DEPS
 
     try {
       // 第一步：从缓存获取后端类型（登录页已经检测并缓存了）
@@ -118,7 +115,7 @@ export const useAuthStore = defineStore('auth', () => {
 
     // 如果未初始化，尝试恢复（页面刷新场景）
     if (!adapter || !isInitialized) {
-      const d = deps ?? await loadCheckSessionDeps()
+      const d = deps ?? DEFAULT_CHECK_SESSION_DEPS
       isChecking.value = true
       try {
         // 验证 session 是否有效
@@ -155,7 +152,7 @@ export const useAuthStore = defineStore('auth', () => {
       // 若已通过验证但版本未知（常见于跨域 cookie），尝试补一次带凭证的版本探测，纠正 features/端点映射
       if (valid && backendStore.version?.isUnknown) {
         try {
-          const d = deps ?? await loadCheckSessionDeps()
+          const d = deps ?? DEFAULT_CHECK_SESSION_DEPS
           const { adapter: finalAdapter, version: finalVersion } = await d.rebootAdapterWithAuth()
           backendStore.setAdapter(finalAdapter, finalVersion)
         } catch (error) {

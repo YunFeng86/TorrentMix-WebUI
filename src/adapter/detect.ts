@@ -1,5 +1,6 @@
 import axios from 'axios'
-import { getQbitBaseUrl } from '@/api/client'
+import { getQbitBaseUrl, silentApiClient } from '@/api/client'
+import { transClient } from '@/api/trans-client'
 
 export type BackendType = 'qbit' | 'trans' | 'unknown'
 
@@ -32,6 +33,60 @@ export interface BackendVersion {
   rpcSemver?: string
   features?: QbitFeatures        // API 特性标志
   isUnknown?: boolean            // 版本是否未知（未认证/无权限/探测失败等）
+}
+
+function getHeader(headers: Record<string, unknown> | undefined, key: string): string | undefined {
+  if (!headers) return undefined
+  const lower = key.toLowerCase()
+  const val = (headers as any)[lower] ?? (headers as any)[key] ?? (headers as any)[key.toLowerCase()]
+  if (typeof val === 'string' && val.trim()) return val.trim()
+  return undefined
+}
+
+async function probeTransmissionWithRetry(
+  detector: ReturnType<typeof axios.create>
+): Promise<Pick<BackendVersion, 'version' | 'major' | 'minor' | 'patch' | 'rpcSemver' | 'isUnknown'> | null> {
+  const call = async (headers?: Record<string, string>) => detector.post(
+    '/transmission/rpc',
+    { method: 'session-get' },
+    {
+      validateStatus: () => true,
+      headers: { 'Content-Type': 'application/json', ...(headers ?? {}) }
+    }
+  )
+
+  const first = await call()
+
+  if (first.status !== 409 && first.status !== 200) return null
+
+  // Transmission 4.1+ 会在 409 响应头里提供 RPC 版本信息（用于选择 JSON-RPC2 vs legacy）
+  let rpcSemver: string | undefined = getHeader(first.headers, 'x-transmission-rpc-version')
+
+  // 若已经拿到 200，则直接解析 body
+  if (first.status === 200 && first.data?.arguments) {
+    const version = first.data.arguments.version || 'unknown'
+    rpcSemver = first.data.arguments['rpc-version-semver'] || first.data.arguments.rpcVersionSemver || rpcSemver
+    const parsed = version === 'unknown' ? { major: 0, minor: 0, patch: 0 } : parseVersion(version)
+    return { version, ...parsed, rpcSemver, isUnknown: version === 'unknown' }
+  }
+
+  // 409: 需要先拿到 Session-Id 再重试一次
+  const sessionId = getHeader(first.headers, 'x-transmission-session-id')
+  if (!sessionId) {
+    return { version: 'unknown', major: 0, minor: 0, patch: 0, rpcSemver, isUnknown: true }
+  }
+
+  try {
+    const retry = await call({ 'X-Transmission-Session-Id': sessionId })
+    if (retry.status === 200 && retry.data?.arguments) {
+      const version = retry.data.arguments.version || 'unknown'
+      rpcSemver = retry.data.arguments['rpc-version-semver'] || retry.data.arguments.rpcVersionSemver || rpcSemver
+      const parsed = version === 'unknown' ? { major: 0, minor: 0, patch: 0 } : parseVersion(version)
+      return { version, ...parsed, rpcSemver, isUnknown: version === 'unknown' }
+    }
+  } catch {}
+
+  return { version: 'unknown', major: 0, minor: 0, patch: 0, rpcSemver, isUnknown: true }
 }
 
 function getEnv(): Record<string, any> {
@@ -130,8 +185,6 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
   const forced = getForcedBackend()
 
   // 使用 silentApiClient 来携带已登录的 cookie，但不会在 403 时抛出 AuthError
-  const { silentApiClient } = await import('@/api/client')
-
   // 强制 qBittorrent：只尝试 qB
   if (forced === 'qbit') {
     try {
@@ -174,7 +227,6 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
   // 强制 Transmission：只尝试 TR
   if (forced === 'trans') {
     try {
-      const { transClient } = await import('@/api/trans-client')
       const res = await transClient.post('', { method: 'session-get' })
 
       let version = 'unknown'
@@ -185,7 +237,8 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
         rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
       }
 
-      const parsed = parseVersion(version)
+      // 防止把未知版本伪装成 4.0.0（parseVersion 的默认值对 qB 是合理的，但对 Transmission 会误导逻辑分支）
+      const parsed = version === 'unknown' ? { major: 0, minor: 0, patch: 0 } : parseVersion(version)
       const isUnknown = version === 'unknown'
 
       return {
@@ -239,7 +292,6 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
 
   // 尝试 Transmission
   try {
-    const { transClient } = await import('@/api/trans-client')
     const res = await transClient.post('', { method: 'session-get' })
 
     let version = 'unknown'
@@ -250,7 +302,7 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
       rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
     }
 
-    const parsed = parseVersion(version)
+    const parsed = version === 'unknown' ? { major: 0, minor: 0, patch: 0 } : parseVersion(version)
     const isUnknown = version === 'unknown'
 
     return {
@@ -325,31 +377,8 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
   // 强制 Transmission：只尝试 TR
   if (forced === 'trans') {
     try {
-      const res = await detector.post('/transmission/rpc', { method: 'session-get' }, {
-        validateStatus: () => true,
-        headers: { 'Content-Type': 'application/json' }
-      })
-
-      if (res.status === 409 || res.status === 200) {
-        let version = 'unknown'
-        let rpcSemver: string | undefined
-
-        if (res.status === 200 && res.data?.arguments) {
-          version = res.data.arguments.version || 'unknown'
-          rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
-        }
-
-        const parsed = parseVersion(version)
-        const isUnknown = res.status === 409 || version === 'unknown'
-
-        return {
-          type: 'trans',
-          version,
-          ...parsed,
-          rpcSemver,
-          isUnknown
-        }
-      }
+      const res = await probeTransmissionWithRetry(detector)
+      if (res) return { type: 'trans', ...res }
     } catch {}
 
     return {
@@ -394,31 +423,8 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
 
   // 尝试 Transmission
   try {
-    const res = await detector.post('/transmission/rpc', { method: 'session-get' }, {
-      validateStatus: () => true,
-      headers: { 'Content-Type': 'application/json' }
-    })
-
-    if (res.status === 409 || res.status === 200) {
-      let version = 'unknown'
-      let rpcSemver: string | undefined
-
-      if (res.status === 200 && res.data?.arguments) {
-        version = res.data.arguments.version || 'unknown'
-        rpcSemver = res.data.arguments['rpc-version-semver'] || res.data.arguments.rpcVersionSemver
-      }
-
-      const parsed = parseVersion(version)
-      const isUnknown = res.status === 409 || version === 'unknown'
-
-      return {
-        type: 'trans',
-        version,
-        ...parsed,
-        rpcSemver,
-        isUnknown  // 添加标记
-      }
-    }
+    const res = await probeTransmissionWithRetry(detector)
+    if (res) return { type: 'trans', ...res }
   } catch {}
 
   // 保守策略：检测失败返回 qBittorrent v4
