@@ -1,17 +1,6 @@
 <script setup lang="ts">
-import { type Component as VueComponent, computed } from 'vue'
-import * as Icons from 'lucide-vue-next'
-
-// 将 kebab-case 转为 PascalCase
-// 例如: "upload-cloud" -> "UploadCloud", "x" -> "X"
-function toPascalCase(str: string): string {
-  return str
-    .split('-')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('')
-}
-
-type IconName = keyof typeof Icons
+import { computed } from 'vue'
+import { getIconComponent } from '@/components/icons/registry'
 
 // 图标颜色映射
 const iconColors = {
@@ -45,9 +34,7 @@ const props = withDefaults(defineProps<Props>(), {
   color: 'default',
 })
 
-// 转换图标名称为 PascalCase
-const iconName = computed(() => toPascalCase(props.name) as IconName)
-const iconComponent = computed(() => Icons[iconName.value] as VueComponent)
+const iconComponent = computed(() => getIconComponent(props.name))
 const colorClass = computed(() => iconColors[props.color as IconColor] || props.color || '')
 </script>
 

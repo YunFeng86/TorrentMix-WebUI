@@ -58,24 +58,18 @@ function getForcedBackend(): BackendType | null {
 }
 
 /**
- * 判断是否应该使用代理（开发环境或同源）
+ * 判断是否应该使用相对路径（开发环境代理 / 生产同源部署）
  *
- * - 开发环境：走 Vite 代理（baseURL 为空字符串）
- * - 生产环境同源：使用配置的 baseURL
- * - 生产环境跨域且 VITE_ALLOW_CROSS_ORIGIN=true：使用配置的 baseURL
+ * - baseURL 为空：使用相对路径（开发环境走 Vite 代理；生产环境同源部署）
+ * - baseURL 非空：使用配置的 baseURL（支持 subpath/跨域）
  */
-function shouldUseProxy(): boolean {
+function shouldUseRelativePath(): boolean {
   const configuredUrl = getQbitBaseUrl()
-  if (!configuredUrl) return true  // 空 URL = 开发环境走代理
+  // 空 URL = 使用相对路径（开发环境走 Vite 代理；生产环境同源部署）
+  if (!configuredUrl) return true
 
-  // 检查是否同源
-  if (typeof window === 'undefined') return true
-  try {
-    const resolved = new URL(configuredUrl, window.location.href)
-    return resolved.origin === window.location.origin
-  } catch {
-    return true
-  }
+  // 配置了 baseURL（可能包含 subpath/跨域）时必须使用它，避免丢失 path 前缀
+  return false
 }
 
 const BACKEND_TYPE_CACHE_DURATION = 3600000 // 1小时
@@ -99,8 +93,8 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
   }
 
   // 缓存未命中或过期，重新检测
-  const useProxy = shouldUseProxy()
-  const baseURL = useProxy ? '' : getQbitBaseUrl()
+  const useRelativePath = shouldUseRelativePath()
+  const baseURL = useRelativePath ? '' : getQbitBaseUrl()
   const detector = axios.create({ baseURL, timeout, withCredentials: false })
 
   // 尝试 qBittorrent
@@ -284,8 +278,8 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
  */
 export async function detectBackendWithVersion(timeout = 3000): Promise<BackendVersion> {
   const forced = getForcedBackend()
-  const useProxy = shouldUseProxy()
-  const baseURL = useProxy ? '' : getQbitBaseUrl()
+  const useRelativePath = shouldUseRelativePath()
+  const baseURL = useRelativePath ? '' : getQbitBaseUrl()
 
   const detector = axios.create({ baseURL, timeout, withCredentials: false })
 

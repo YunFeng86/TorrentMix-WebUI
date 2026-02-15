@@ -15,6 +15,11 @@ type LoginDeps = {
   TransAdapter: new (opts?: any) => BaseAdapter
 }
 
+type CheckSessionDeps = {
+  createAdapter: () => Promise<{ adapter: BaseAdapter; version: BackendVersion }>
+  rebootAdapterWithAuth: () => Promise<{ adapter: BaseAdapter; version: BackendVersion }>
+}
+
 async function loadLoginDeps(): Promise<LoginDeps> {
   const { detectBackendTypeOnly, detectBackendWithVersionAuth } = await import('@/adapter/detect')
   const { createAdapterByType, saveVersionCache, clearVersionCache } = await import('@/adapter/factory')
@@ -36,6 +41,11 @@ export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false)
   const isChecking = ref(false)
   const isInitializing = ref(false)
+
+  async function loadCheckSessionDeps(): Promise<CheckSessionDeps> {
+    const { createAdapter, rebootAdapterWithAuth } = await import('@/adapter/factory')
+    return { createAdapter, rebootAdapterWithAuth }
+  }
 
   async function login(username: string, password: string, deps?: LoginDeps) {
     const backendStore = useBackendStore()
@@ -102,28 +112,38 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated.value = false
   }
 
-  async function checkSession(): Promise<boolean> {
+  async function checkSession(deps?: CheckSessionDeps): Promise<boolean> {
     const backendStore = useBackendStore()
     const { adapter, isInitialized } = backendStore
 
     // 如果未初始化，尝试恢复（页面刷新场景）
     if (!adapter || !isInitialized) {
+      const d = deps ?? await loadCheckSessionDeps()
+      isChecking.value = true
       try {
-        // 尝试检测后端类型并初始化适配器
-        const { createAdapter } = await import('@/adapter/factory')
-        const { adapter: newAdapter, version } = await createAdapter()
-        backendStore.setAdapter(newAdapter, version)
-
         // 验证 session 是否有效
-        const valid = await newAdapter.checkSession()
-        if (valid) {
-          isAuthenticated.value = true
-          return true
+        // 注意：先验证，后上岗，避免把未认证的 adapter/version 写进全局 store
+        const { adapter: tempAdapter, version: tempVersion } = await d.createAdapter()
+        const valid = await tempAdapter.checkSession()
+        if (!valid) return false
+
+        // session 有效：在已认证上下文中重建一次 adapter，拿到真实版本/features（例如 qB v5 的 stop/start）
+        try {
+          const { adapter: finalAdapter, version: finalVersion } = await d.rebootAdapterWithAuth()
+          backendStore.setAdapter(finalAdapter, finalVersion)
+        } catch (error) {
+          console.warn('[Auth] Reboot adapter with auth failed; falling back to temp adapter.', error)
+          backendStore.setAdapter(tempAdapter, tempVersion)
         }
-      } catch {
-        // 恢复失败，session 无效
+
+        isAuthenticated.value = true
+        return true
+      } catch (error) {
+        console.warn('[Auth] Session restore failed:', error)
+        return false
+      } finally {
+        isChecking.value = false
       }
-      return false
     }
 
     // 已初始化，直接验证 session
@@ -131,6 +151,18 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const valid = await adapter.checkSession()
       isAuthenticated.value = valid
+
+      // 若已通过验证但版本未知（常见于跨域 cookie），尝试补一次带凭证的版本探测，纠正 features/端点映射
+      if (valid && backendStore.version?.isUnknown) {
+        try {
+          const d = deps ?? await loadCheckSessionDeps()
+          const { adapter: finalAdapter, version: finalVersion } = await d.rebootAdapterWithAuth()
+          backendStore.setAdapter(finalAdapter, finalVersion)
+        } catch (error) {
+          console.warn('[Auth] Reboot adapter with auth failed:', error)
+        }
+      }
+
       return valid
     } finally {
       isChecking.value = false

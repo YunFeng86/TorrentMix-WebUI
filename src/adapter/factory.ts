@@ -58,6 +58,31 @@ export async function createAdapter(): Promise<{ adapter: BaseAdapter; version: 
 }
 
 /**
+ * 在“已认证”上下文中重建适配器（携带 cookie / Basic Auth 等凭证探测真实版本）
+ *
+ * 典型场景：页面刷新后，通过 checkSession 发现 session 有效，但初始探测拿不到版本（尤其是跨域 cookie）。
+ * 此时需要二次探测以获得正确的 features（例如 qB v5 的 stop/start 端点）。
+ */
+export async function rebootAdapterWithAuth(): Promise<{ adapter: BaseAdapter; version: BackendVersion }> {
+  const { detectBackendWithVersionAuth } = await import('./detect')
+  const version = await detectBackendWithVersionAuth()
+
+  // 仅缓存已知版本
+  if (!version.isUnknown) {
+    saveVersionCache(version)
+  }
+
+  let adapter: BaseAdapter
+  if (version.type === 'qbit') {
+    adapter = new QbitAdapter(resolveQbitFeatures(version))
+  } else {
+    adapter = new TransAdapter({ rpcSemver: version.rpcSemver })
+  }
+
+  return { adapter, version }
+}
+
+/**
  * 根据后端类型创建适配器（不检测版本）
  * 用于登录前创建适配器实例
  */

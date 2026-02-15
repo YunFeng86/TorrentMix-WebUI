@@ -92,3 +92,65 @@ test('auth: logout calls adapter.logout and clears authenticated flag', async ()
   assert.equal(auth.isAuthenticated, false)
 })
 
+test('auth: checkSession restores session and falls back to temp adapter when rebootAdapterWithAuth fails', async () => {
+  setActivePinia(createPinia())
+
+  const auth = useAuthStore()
+  const backend = useBackendStore()
+
+  const tempCheckSession = async () => true
+  const tempAdapter = { checkSession: tempCheckSession }
+  const tempVersion = { type: 'qbit', version: 'unknown', major: 4, minor: 0, patch: 0, isUnknown: true }
+
+  const deps = {
+    createAdapter: async () => ({ adapter: tempAdapter as any, version: tempVersion as any }),
+    rebootAdapterWithAuth: async () => { throw new Error('network wobble') }
+  }
+
+  const originalWarn = console.warn
+  console.warn = () => {}
+  try {
+    const ok = await auth.checkSession(deps as any)
+
+    assert.equal(ok, true)
+    assert.equal(auth.isAuthenticated, true)
+    assert.equal(auth.isChecking, false)
+
+    assert.strictEqual((backend.adapter as any)?.checkSession, tempCheckSession)
+    assert.equal(backend.version?.isUnknown, true)
+  } finally {
+    console.warn = originalWarn
+  }
+})
+
+test('auth: checkSession keeps existing adapter when session is valid but rebootAdapterWithAuth fails', async () => {
+  setActivePinia(createPinia())
+
+  const auth = useAuthStore()
+  const backend = useBackendStore()
+
+  const existingCheckSession = async () => true
+  const existingAdapter = { checkSession: existingCheckSession }
+  const unknownVersion = { type: 'qbit', version: 'unknown', major: 4, minor: 0, patch: 0, isUnknown: true }
+  backend.setAdapter(existingAdapter as any, unknownVersion as any)
+
+  const deps = {
+    createAdapter: async () => { throw new Error('not used') },
+    rebootAdapterWithAuth: async () => { throw new Error('network wobble') }
+  }
+
+  const originalWarn = console.warn
+  console.warn = () => {}
+  try {
+    const ok = await auth.checkSession(deps as any)
+
+    assert.equal(ok, true)
+    assert.equal(auth.isAuthenticated, true)
+    assert.equal(auth.isChecking, false)
+
+    assert.strictEqual((backend.adapter as any)?.checkSession, existingCheckSession)
+    assert.equal(backend.version?.isUnknown, true)
+  } finally {
+    console.warn = originalWarn
+  }
+})
