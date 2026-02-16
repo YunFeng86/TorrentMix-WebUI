@@ -1,4 +1,5 @@
 import { apiClient, silentApiClient, getQbitBaseUrl, AuthError } from '@/api/client'
+import { warnOnce } from '@/utils/logger'
 import axios from 'axios'
 import type {
   UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState, Category, ServerState,
@@ -270,7 +271,37 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     ])
 
     const props = propsRes.data || {}
-    const peers = Object.values(peersRes.data?.peers || {}) as QBPeer[]
+
+    const rawPeers = (peersRes.data as any)?.peers as unknown
+    let peers: QBPeer[] = []
+    if (Array.isArray(rawPeers)) {
+      peers = rawPeers as QBPeer[]
+    } else if (rawPeers && typeof rawPeers === 'object') {
+      peers = Object.values(rawPeers as Record<string, QBPeer>) as QBPeer[]
+    }
+
+    // Peers 接口文档为 TODO：开发环境下做一个结构探针，避免 qB 升级后“静默失效”。
+    // 同时用 warnOnce 避免轮询场景刷屏。
+    if (Boolean((import.meta as any).env?.DEV)) {
+      const kind = rawPeers === null ? 'null' : Array.isArray(rawPeers) ? 'array' : typeof rawPeers
+
+      if (rawPeers === undefined) {
+        warnOnce('qbit/peers/missing', 'Missing peers field from /sync/torrentPeers payload.', { hash })
+      } else if (rawPeers === null || (!Array.isArray(rawPeers) && typeof rawPeers !== 'object')) {
+        warnOnce(`qbit/peers/invalid-kind:${kind}`, 'Unexpected peers payload kind from /sync/torrentPeers.', { hash, kind })
+      } else {
+        const sample = peers[0] as unknown
+        if (sample && typeof sample === 'object') {
+          const s = sample as Record<string, unknown>
+          const looksLikePeer = 'ip' in s || 'client' in s || 'dl_speed' in s || 'up_speed' in s
+          if (!looksLikePeer) {
+            warnOnce('qbit/peers/structure', 'qB peer structure might have changed (/sync/torrentPeers).', { hash, sample })
+          }
+        } else if (sample !== undefined) {
+          warnOnce(`qbit/peers/invalid-sample:${typeof sample}`, 'Unexpected peer item type from /sync/torrentPeers.', { hash, type: typeof sample })
+        }
+      }
+    }
 
     const num = (val: unknown): number | undefined => (typeof val === 'number' && Number.isFinite(val) ? val : undefined)
     const nonNeg = (val: unknown): number | undefined => {
@@ -820,13 +851,29 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     const alt = state.use_alt_speed_limits ?? state.use_alt_speed
 
     const safeNum = (val: unknown, fallback = 0): number => {
-      const n = typeof val === 'number' ? val : Number(val)
-      return Number.isFinite(n) ? n : fallback
+      if (typeof val === 'number') {
+        return Number.isFinite(val) ? val : fallback
+      }
+      if (typeof val === 'string') {
+        const trimmed = val.trim()
+        if (!trimmed) return fallback
+        const parsed = Number(trimmed)
+        return Number.isFinite(parsed) ? parsed : fallback
+      }
+      return fallback
     }
     const safeBool = (val: unknown, fallback = false): boolean => {
       if (typeof val === 'boolean') return val
-      if (val === 1 || val === '1' || val === 'true') return true
-      if (val === 0 || val === '0' || val === 'false') return false
+      if (typeof val === 'number') {
+        if (val === 1) return true
+        if (val === 0) return false
+        return fallback
+      }
+      if (typeof val === 'string') {
+        const normalized = val.trim().toLowerCase()
+        if (normalized === '1' || normalized === 'true') return true
+        if (normalized === '0' || normalized === 'false') return false
+      }
       return fallback
     }
 
@@ -903,7 +950,8 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     const index = (typeof file.index === 'number' ? file.index : file.id) ?? 0
 
     let priority: TorrentFile['priority'] = 'normal'
-    // qB file priority values: 0=do not download, 1=normal, 6=high, 7=maximal
+    // qB file priority values (docs): 0=do not download, 1=normal, 6=high, 7=maximal
+    // -2: undocumented fallback; treat as "do not download" defensively
     if (file.priority === 0 || file.priority === -2) priority = 'do_not_download'
     else if (file.priority === 6 || file.priority === 7) priority = 'high'
 

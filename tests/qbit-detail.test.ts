@@ -61,7 +61,14 @@ test('qB detail: fetchDetail must merge torrents/info with generic properties', 
         }
       }
 
-      if (url === '/api/v2/torrents/files') return { data: [] }
+      if (url === '/api/v2/torrents/files') {
+        return {
+          data: [
+            // Defensive fallback: upstream docs don't list negative values for file priority.
+            { index: 0, name: 'file.bin', size: 10, progress: 0.1, priority: -2 },
+          ],
+        }
+      }
       if (url === '/api/v2/torrents/trackers') return { data: [] }
       if (url === '/api/v2/sync/torrentPeers') return { data: { peers: {} } }
 
@@ -87,6 +94,8 @@ test('qB detail: fetchDetail must merge torrents/info with generic properties', 
     assert.equal(detail.numLeechers, 6)
     assert.equal(detail.totalSeeds, 50)
     assert.equal(detail.totalLeechers, 60)
+    assert.equal(detail.files.length, 1)
+    assert.equal(detail.files[0]?.priority, 'do_not_download')
   } finally {
     mock.restoreAll()
   }
@@ -173,5 +182,41 @@ test('qB detail: fetchDetail falls back when torrents/info is unavailable (parti
     assert.equal(detail.totalLeechers, 60)
   } finally {
     mock.restoreAll()
+  }
+})
+
+test('qB detail: fetchDetail peers parsing should be defensive when payload is invalid', async () => {
+  const adapter = new QbitAdapter(DEFAULT_QBIT_FEATURES)
+  const hash = 'abc'
+
+  const cases: Array<{ label: string; peers: unknown }> = [
+    { label: 'string', peers: 'some_weird_string_from_proxy_error' },
+    { label: 'null', peers: null },
+    { label: 'missing', peers: undefined },
+  ]
+
+  for (const c of cases) {
+    try {
+      mock.method(apiClient as any, 'get', async (url: string, config?: any) => {
+        if (url === '/api/v2/torrents/info') {
+          assert.equal(config?.params?.hashes, hash)
+          return { data: [{ hash, name: 'My Torrent', size: 100, progress: 0 }] }
+        }
+        if (url === '/api/v2/torrents/properties') {
+          assert.equal(config?.params?.hash, hash)
+          return { data: { seeds: 0, peers: 0, seeds_total: 0, peers_total: 0, nb_connections: 0, total_size: 100 } }
+        }
+        if (url === '/api/v2/torrents/files') return { data: [] }
+        if (url === '/api/v2/torrents/trackers') return { data: [] }
+        if (url === '/api/v2/sync/torrentPeers') return { data: c.peers === undefined ? {} : { peers: c.peers } }
+        throw new Error(`unexpected call: ${url}`)
+      })
+
+      const detail = await adapter.fetchDetail(hash)
+      assert.equal(Array.isArray(detail.peers), true, c.label)
+      assert.equal(detail.peers.length, 0, c.label)
+    } finally {
+      mock.restoreAll()
+    }
   }
 })
