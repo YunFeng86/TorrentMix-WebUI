@@ -308,28 +308,28 @@ export interface BaseAdapter {
   /**
    * 设置下载限速
    * @param hash - 种子 hash/id
-   * @param limit - 限速值（bytes/s），-1 表示无限制
+   * @param limit - 限速值（bytes/s），<= 0 表示无限制
    */
   setDownloadLimit(hash: string, limit: number): Promise<void>
 
   /**
    * 批量设置下载限速
    * @param hashes - 种子 hash/id 数组
-   * @param limit - 限速值（bytes/s），0 表示无限制
+   * @param limit - 限速值（bytes/s），<= 0 表示无限制
    */
   setDownloadLimitBatch(hashes: string[], limit: number): Promise<void>
 
   /**
    * 设置上传限速
    * @param hash - 种子 hash/id
-   * @param limit - 限速值（bytes/s），-1 表示无限制
+   * @param limit - 限速值（bytes/s），<= 0 表示无限制
    */
   setUploadLimit(hash: string, limit: number): Promise<void>
 
   /**
    * 批量设置上传限速
    * @param hashes - 种子 hash/id 数组
-   * @param limit - 限速值（bytes/s），0 表示无限制
+   * @param limit - 限速值（bytes/s），<= 0 表示无限制
    */
   setUploadLimitBatch(hashes: string[], limit: number): Promise<void>
 

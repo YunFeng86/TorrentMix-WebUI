@@ -6,7 +6,7 @@
 
 **Core Tech**: Vue 3 (Script Setup), TypeScript, Vite, Tailwind CSS, Shadcn Vue.
 
-**Target Backends**: qBittorrent (WebAPI v2, **全版本支持**) & Transmission (RPC, **全版本支持**).
+**Target Backends**: qBittorrent (WebAPI v2, **v3.2.0+**) & Transmission (RPC, **全版本支持**).
 
 **Deployment**: 纯静态资源 (完全本地化)，通过 Docker 挂载或 WebUI 目录替换运行。
 
@@ -41,7 +41,8 @@
 - **特殊处理**:
   - **qBittorrent**: 处理 sync/maindata 的 RID 和 partial data 合并逻辑。
     - 📖 **API 文档**: [docs/WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20(qBittorrent%205.0).md) (最新版)
-    - 📖 **历史版本**: [4.1](../docs/WebUI%20API%20(qBittorrent%204.1).md) | [v3.2-v4.0](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md) | [v3.1.x](../docs/WebUI%20API%20(qBittorrent%20v3.1.x).md)
+    - 📖 **历史版本**: [4.1](../docs/WebUI%20API%20(qBittorrent%204.1).md) | [v3.2-v4.0](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md)
+    - ⚠️ **最低版本**: 本项目仅支持 qBittorrent WebAPI v2（`/api/v2/*`），即 **v3.2.0+**；v3.1.x 使用旧 `/command/*` + Digest Auth（仓库保留文档仅供参考，不承诺支持）
     - 关键端点: `/api/v2/torrents/info`, `/api/v2/sync/maindata`
     - 状态字段映射参考文档中的 `state` 枚举值
     - **版本检测**: 通过 `/api/v2/app/webapiVersion` 判断 API 版本，适配不同版本的差异
@@ -388,20 +389,20 @@ src/
 
 ## 📚 API Documentation References
 
-本项目实现了对 qBittorrent 和 Transmission **全版本覆盖**的适配层。所有 API 实现必须参考以下官方文档，并根据检测到的后端版本动态适配。
+本项目实现了对 qBittorrent (WebAPI v2, v3.2.0+) 和 Transmission (RPC) 的适配层。所有 API 实现必须参考以下官方文档，并根据检测到的后端版本动态适配。
 
 ### 版本覆盖策略
 
 **核心原则**: 从最新版本 API 向下兼容，自动检测并适配不同版本的差异。
 
-- ✅ **qBittorrent**: v3.1.x → v5.0+ (WebAPI v2)
+- ✅ **qBittorrent**: v3.2.0+ (WebAPI v2)
 - ✅ **Transmission**: v2.x → v4.1+ (RPC)
 - 🔧 **自动检测**: 启动时探测后端类型和版本
 - 🛡️ **优雅降级**: 新特性在旧版本上静默失效
 
 ---
 
-### qBittorrent Web API (全版本覆盖)
+### qBittorrent Web API (v3.2.0+)
 
 **文档列表** (按版本从新到旧):
 
@@ -410,7 +411,8 @@ src/
 | **v5.0+** (最新) | [WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20(qBittorrent%205.0).md) | WebAPI v2.11.3+, cookies API, reannounce 支持 |
 | **v4.1.x - v4.6.x** | [WebUI API (qBittorrent 4.1).md](../docs/WebUI%20API%20(qBittorrent%204.1).md) | WebAPI v2.8.3+, torrent rename |
 | **v3.2.x - v4.0.x** | [WebUI API (qBittorrent v3.2.0 v4.0.4).md](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md) | WebAPI v2.0-v2.8, sync/maindata |
-| **v3.1.x** | [WebUI API (qBittorrent v3.1.x).md](../docs/WebUI%20API%20(qBittorrent%20v3.1.x).md) | 早期 API |
+
+> 注：`docs/WebUI API (qBittorrent v3.1.x).md` 对应旧 WebUI API（`/command/*` + Digest Auth），与 WebAPI v2（`/api/v2/*`）不兼容；仓库保留该文档仅用于对照参考。
 
 **版本检测方法**:
 ```typescript
@@ -657,7 +659,7 @@ if (backend.type === 'qBittorrent') {
 
 | 后端 | 版本范围 | 最低版本 | 推荐版本 | 核心特性 |
 |------|---------|---------|---------|---------|
-| **qBittorrent** | v3.1.x - v5.0+ | v3.1.x | v5.0+ | sync/maindata (v2.0+), cookies (v2.11+) |
+| **qBittorrent** | v3.2.0 - v5.0+ | v3.2.0 | v5.0+ | sync/maindata (WebAPI v2.0+), cookies (WebAPI v2.11+) |
 | **Transmission** | v2.x - v4.1+ | v2.80 | v4.1+ | 字段过滤 (全版本), JSON-RPC 2.0 (v4.1+) |
 
 **优雅降级策略**:

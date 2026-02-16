@@ -207,17 +207,30 @@ const STATE_MAP: Record<number, TorrentState> = {
 export class TransAdapter implements BaseAdapter {
   private protocolVersion: 'json-rpc2' | 'legacy' = 'legacy'
   private currentMap = new Map<string, UnifiedTorrent>()
+  private supportsLabels = true
 
   constructor(versionInfo?: { rpcSemver?: string }) {
-    // 根据 rpc-version-semver 判断协议版本
-    if (versionInfo?.rpcSemver) {
-      const semver = versionInfo.rpcSemver.split('.').map(Number)
-      // rpc-version-semver >= 6.0.0 使用 JSON-RPC 2.0
-      this.protocolVersion = (semver[0] ?? 0) >= 6 ? 'json-rpc2' : 'legacy'
-    } else {
+    // 根据 rpc-version-semver 判断协议版本和可用字段
+    const semverText = versionInfo?.rpcSemver
+    const canParseSemver = typeof semverText === 'string' && semverText.includes('.')
+
+    if (!canParseSemver) {
       // 未知版本时优先使用 legacy（兼容面更大；4.1+ 也仍支持 legacy）
       this.protocolVersion = 'legacy'
+      // labels 是 Transmission 3.00 (rpc 5.2.0) 才新增；未知版本先乐观开启，失败后降级。
+      this.supportsLabels = true
+      return
     }
+
+    const semver = String(semverText).split('.').map(Number)
+    const major = semver[0] ?? 0
+    const minor = semver[1] ?? 0
+
+    // rpc-version-semver >= 6.0.0 使用 JSON-RPC 2.0
+    this.protocolVersion = major >= 6 ? 'json-rpc2' : 'legacy'
+
+    // labels 支持：rpc-version-semver >= 5.2.0 (Transmission 3.00+)
+    this.supportsLabels = major > 5 || (major === 5 && minor >= 2)
   }
 
   private pick<T>(obj: Record<string, unknown> | undefined, ...keys: string[]): T | undefined {
@@ -600,9 +613,7 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async fetchList(): Promise<FetchListResult> {
-    const data = await this.rpcCall<{
-      torrents: TRTorrent[]
-    }>('torrent-get', {
+    const call = async () => this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       fields: this.protocolVersion === 'json-rpc2'
         ? [
             'hash_string', 'id', 'name', 'status', 'error', 'error_string',
@@ -610,7 +621,7 @@ export class TransAdapter implements BaseAdapter {
             'rate_download', 'rate_upload',
             'eta', 'upload_ratio',
             'added_date', 'download_dir',
-            'labels',
+            ...(this.supportsLabels ? ['labels'] : []),
             'tracker_stats',
           ]
         : [
@@ -619,10 +630,24 @@ export class TransAdapter implements BaseAdapter {
             'rateDownload', 'rateUpload',
             'eta', 'uploadRatio',
             'addedDate', 'downloadDir',
-            'labels',
+            ...(this.supportsLabels ? ['labels'] : []),
             'trackerStats',
           ],
     })
+
+    let data: { torrents: TRTorrent[] }
+    try {
+      data = await call()
+    } catch (error) {
+      if (!this.supportsLabels) throw error
+      this.supportsLabels = false
+      try {
+        data = await call()
+      } catch {
+        this.supportsLabels = true
+        throw error
+      }
+    }
 
     const map = new Map<string, UnifiedTorrent>()
     for (const torrent of data.torrents || []) {
@@ -675,7 +700,7 @@ export class TransAdapter implements BaseAdapter {
       labels.length = 0
       labels.push(category, ...filtered)
     }
-    if (labels.length > 0) {
+    if (this.supportsLabels && labels.length > 0) {
       rpcParams['labels'] = labels
     }
 
@@ -730,9 +755,7 @@ export class TransAdapter implements BaseAdapter {
 
   // 获取种子详情
   async fetchDetail(hash: string): Promise<UnifiedTorrentDetail> {
-    const data = await this.rpcCall<{
-      torrents: TRTorrent[]
-    }>('torrent-get', {
+    const call = async () => this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       ids: [hash],
       fields: this.protocolVersion === 'json-rpc2'
         ? [
@@ -744,7 +767,7 @@ export class TransAdapter implements BaseAdapter {
             'seconds_seeding',
             'added_date', 'done_date',
             'download_dir',
-            'labels',
+            ...(this.supportsLabels ? ['labels'] : []),
             'peers_connected',
             'peers_getting_from_us',
             'peers_sending_to_us',
@@ -764,7 +787,7 @@ export class TransAdapter implements BaseAdapter {
             'secondsSeeding',
             'addedDate', 'doneDate',
             'downloadDir',
-            'labels',
+            ...(this.supportsLabels ? ['labels'] : []),
             'peersConnected',
             'peersGettingFromUs',
             'peersSendingToUs',
@@ -776,6 +799,20 @@ export class TransAdapter implements BaseAdapter {
             'wanted',
           ],
     })
+
+    let data: { torrents: TRTorrent[] }
+    try {
+      data = await call()
+    } catch (error) {
+      if (!this.supportsLabels) throw error
+      this.supportsLabels = false
+      try {
+        data = await call()
+      } catch {
+        this.supportsLabels = true
+        throw error
+      }
+    }
 
     const torrent = data.torrents?.[0]
     if (!torrent) {
@@ -936,6 +973,10 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async setCategoryBatch(hashes: string[], category: string): Promise<void> {
+    if (!this.supportsLabels) {
+      console.warn('[TransAdapter] Category/labels not supported on this Transmission version')
+      return
+    }
     const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       ...this.buildIds(hashes),
       fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
@@ -963,6 +1004,10 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async setTagsBatch(hashes: string[], tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
+    if (!this.supportsLabels) {
+      console.warn('[TransAdapter] Tags/labels not supported on this Transmission version')
+      return
+    }
     const sanitized = tags.map(t => t.trim()).filter(Boolean)
 
     if (mode === 'set') {

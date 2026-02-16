@@ -7,6 +7,11 @@ import { createAdapterByType, saveVersionCache, clearVersionCache, createAdapter
 import { QbitAdapter, DEFAULT_QBIT_FEATURES } from '@/adapter/qbit'
 import { TransAdapter } from '@/adapter/trans/index'
 
+const isDev = Boolean((import.meta as any).env?.DEV)
+function debugLog(...args: unknown[]) {
+  if (isDev) console.log(...args)
+}
+
 type LoginDeps = {
   detectBackendTypeOnly: (timeout?: number) => Promise<BackendType>
   detectBackendWithVersionAuth: (timeout?: number) => Promise<BackendVersion>
@@ -51,22 +56,22 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       // 第一步：从缓存获取后端类型（登录页已经检测并缓存了）
       const backendType = await d.detectBackendTypeOnly()
-      console.log('[Login] Backend type:', backendType)
+      debugLog('[Login] Backend type:', backendType)
 
       // 第二步：使用 factory 模式创建初始适配器
       const adapter = await d.createAdapterByType(backendType)
-      console.log('[Login] Initial adapter created')
+      debugLog('[Login] Initial adapter created')
 
       // 第三步：使用初始适配器登录
-      console.log('[Login] Calling login API...')
+      debugLog('[Login] Calling login API...')
       await adapter.login(username, password)
-      console.log('[Login] Login successful')
+      debugLog('[Login] Login successful')
 
       // 第四步：登录后检测版本（只检测一次）
-      console.log('[Login] Detecting version with auth...')
+      debugLog('[Login] Detecting version with auth...')
 
       const versionInfo = await d.detectBackendWithVersionAuth()
-      console.log('[Login] Version info:', versionInfo)
+      debugLog('[Login] Version info:', versionInfo)
 
       // 如果仍然是未知版本，使用默认版本
       const finalVersion: BackendVersion = versionInfo.isUnknown
@@ -96,7 +101,7 @@ export const useAuthStore = defineStore('auth', () => {
 
       backendStore.setAdapter(finalAdapter, finalVersion)
       isAuthenticated.value = true
-      console.log('[Login] Setup complete, version:', finalVersion)
+      debugLog('[Login] Setup complete, version:', finalVersion)
     } catch (error) {
       console.error('[Login] Login failed:', error)
       throw error  // 重新抛出错误，让登录页显示

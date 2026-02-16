@@ -101,6 +101,37 @@ test('qB detail: fetchDetail must merge torrents/info with generic properties', 
   }
 })
 
+test('qB detail: fetchDetail should normalize 0 speed limits to -1 (unlimited)', async () => {
+  const adapter = new QbitAdapter(DEFAULT_QBIT_FEATURES)
+  const hash = 'abc'
+
+  try {
+    mock.method(apiClient as any, 'get', async (url: string, config?: any) => {
+      if (url === '/api/v2/torrents/info') {
+        assert.equal(config?.params?.hashes, hash)
+        return { data: [{ hash, name: 'My Torrent', size: 100, progress: 0, dl_limit: 0, up_limit: 0 }] }
+      }
+
+      if (url === '/api/v2/torrents/properties') {
+        assert.equal(config?.params?.hash, hash)
+        return { data: { dl_limit: 0, up_limit: 0, seeds: 0, peers: 0, seeds_total: 0, peers_total: 0, nb_connections: 0, total_size: 100 } }
+      }
+
+      if (url === '/api/v2/torrents/files') return { data: [] }
+      if (url === '/api/v2/torrents/trackers') return { data: [] }
+      if (url === '/api/v2/sync/torrentPeers') return { data: { peers: {} } }
+
+      throw new Error(`unexpected call: ${url}`)
+    })
+
+    const detail = await adapter.fetchDetail(hash)
+    assert.equal(detail.dlLimit, -1)
+    assert.equal(detail.upLimit, -1)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
 test('qB detail: fetchDetail falls back when torrents/info is unavailable (partial detail)', async () => {
   const adapter = new QbitAdapter(DEFAULT_QBIT_FEATURES)
   const hash = 'abc'
@@ -218,5 +249,59 @@ test('qB detail: fetchDetail peers parsing should be defensive when payload is i
     } finally {
       mock.restoreAll()
     }
+  }
+})
+
+test('qB detail: fetchDetail should ignore invalid peer items and coerce numeric strings', async () => {
+  const adapter = new QbitAdapter(DEFAULT_QBIT_FEATURES)
+  const hash = 'abc'
+
+  try {
+    mock.method(apiClient as any, 'get', async (url: string, config?: any) => {
+      if (url === '/api/v2/torrents/info') {
+        assert.equal(config?.params?.hashes, hash)
+        return { data: [{ hash, name: 'My Torrent', size: 100, progress: 0 }] }
+      }
+      if (url === '/api/v2/torrents/properties') {
+        assert.equal(config?.params?.hash, hash)
+        return { data: { seeds: 0, peers: 1, seeds_total: 0, peers_total: 0, nb_connections: 1, total_size: 100 } }
+      }
+      if (url === '/api/v2/torrents/files') return { data: [] }
+      if (url === '/api/v2/torrents/trackers') return { data: [] }
+      if (url === '/api/v2/sync/torrentPeers') {
+        return {
+          data: {
+            peers: [
+              null,
+              'proxy_error_payload',
+              { ip: '', port: 1 },
+              {
+                ip: '1.2.3.4',
+                port: '6881',
+                client: 'qB',
+                progress: '0.5',
+                dl_speed: '10',
+                up_speed: 0,
+                downloaded: '100',
+                uploaded: 200,
+              },
+            ],
+          },
+        }
+      }
+      throw new Error(`unexpected call: ${url}`)
+    })
+
+    const detail = await adapter.fetchDetail(hash)
+    assert.equal(detail.peers.length, 1)
+    assert.equal(detail.peers[0]?.ip, '1.2.3.4')
+    assert.equal(detail.peers[0]?.port, 6881)
+    assert.equal(detail.peers[0]?.client, 'qB')
+    assert.equal(detail.peers[0]?.progress, 0.5)
+    assert.equal(detail.peers[0]?.dlSpeed, 10)
+    assert.equal(detail.peers[0]?.uploaded, 200)
+    assert.equal(detail.peers[0]?.downloaded, 100)
+  } finally {
+    mock.restoreAll()
   }
 })

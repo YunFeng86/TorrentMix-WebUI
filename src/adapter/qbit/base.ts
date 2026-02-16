@@ -8,6 +8,8 @@ import type {
 } from '../types'
 import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
 
+const IS_DEV = Boolean((import.meta as any).env?.DEV)
+
 const STATE_MAP: Record<string, TorrentState> = {
   downloading: 'downloading',
   stalledDL: 'downloading',
@@ -129,8 +131,10 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
           }
 
           // 调试日志：查看限速值变化
-          if (this.currentServerState?.dlRateLimit !== merged.dlRateLimit ||
-              this.currentServerState?.upRateLimit !== merged.upRateLimit) {
+          if (IS_DEV && (
+            this.currentServerState?.dlRateLimit !== merged.dlRateLimit ||
+            this.currentServerState?.upRateLimit !== merged.upRateLimit
+          )) {
             console.log('[ServerState] Rate limits updated:', {
               old: { dl: this.currentServerState?.dlRateLimit, up: this.currentServerState?.upRateLimit },
               raw: { dl: normalized.dlRateLimit, up: normalized.upRateLimit, hasDl: hasDlRateLimit, hasUp: hasUpRateLimit },
@@ -273,16 +277,16 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     const props = propsRes.data || {}
 
     const rawPeers = (peersRes.data as any)?.peers as unknown
-    let peers: QBPeer[] = []
+    let peerItems: unknown[] = []
     if (Array.isArray(rawPeers)) {
-      peers = rawPeers as QBPeer[]
+      peerItems = rawPeers
     } else if (rawPeers && typeof rawPeers === 'object') {
-      peers = Object.values(rawPeers as Record<string, QBPeer>) as QBPeer[]
+      peerItems = Object.values(rawPeers as Record<string, unknown>)
     }
 
     // Peers 接口文档为 TODO：开发环境下做一个结构探针，避免 qB 升级后“静默失效”。
     // 同时用 warnOnce 避免轮询场景刷屏。
-    if (Boolean((import.meta as any).env?.DEV)) {
+    if (IS_DEV) {
       const kind = rawPeers === null ? 'null' : Array.isArray(rawPeers) ? 'array' : typeof rawPeers
 
       if (rawPeers === undefined) {
@@ -290,7 +294,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       } else if (rawPeers === null || (!Array.isArray(rawPeers) && typeof rawPeers !== 'object')) {
         warnOnce(`qbit/peers/invalid-kind:${kind}`, 'Unexpected peers payload kind from /sync/torrentPeers.', { hash, kind })
       } else {
-        const sample = peers[0] as unknown
+        const sample = peerItems[0] as unknown
         if (sample && typeof sample === 'object') {
           const s = sample as Record<string, unknown>
           const looksLikePeer = 'ip' in s || 'client' in s || 'dl_speed' in s || 'up_speed' in s
@@ -309,6 +313,17 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       return n !== undefined && n >= 0 ? n : undefined
     }
     const nonNegOr = (val: unknown, fallback: number): number => nonNeg(val) ?? fallback
+    const normalizeLimit = (val: unknown): number | undefined => {
+      const n = num(val)
+      if (n === undefined) return undefined
+      // qB 的“无限制”在不同端点/版本里可能返回 0 或 -1；统一归一化为 -1。
+      if (n <= 0) return -1
+      return Math.round(n)
+    }
+
+    const peers = peerItems
+      .map(p => this.normalizePeer(p))
+      .filter((p): p is Peer => Boolean(p))
 
     if (infoResult.ok) {
       const info = (infoResult.data || [])[0]
@@ -323,8 +338,8 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         ?? 0
       const uploaded = nonNeg(info.uploaded) ?? nonNeg(props.total_uploaded) ?? 0
 
-      const numSeeds = nonNeg(info.num_seeds) ?? nonNeg(props.seeds) ?? peers.filter((p: QBPeer) => p.progress === 1).length
-      const numLeechers = nonNeg(info.num_leechs) ?? nonNeg(props.peers) ?? peers.filter((p: QBPeer) => p.progress >= 0 && p.progress < 1).length
+      const numSeeds = nonNeg(info.num_seeds) ?? nonNeg(props.seeds) ?? peers.filter(p => p.progress === 1).length
+      const numLeechers = nonNeg(info.num_leechs) ?? nonNeg(props.peers) ?? peers.filter(p => p.progress >= 0 && p.progress < 1).length
 
       const connections = nonNeg(props.nb_connections) ?? (numSeeds + numLeechers)
 
@@ -334,8 +349,8 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         size,
         completed,
         uploaded,
-        dlLimit: num(info.dl_limit) ?? num(props.dl_limit) ?? -1,
-        upLimit: num(info.up_limit) ?? num(props.up_limit) ?? -1,
+        dlLimit: normalizeLimit(info.dl_limit) ?? normalizeLimit(props.dl_limit) ?? -1,
+        upLimit: normalizeLimit(info.up_limit) ?? normalizeLimit(props.up_limit) ?? -1,
         seedingTime: nonNegOr(info.seeding_time, nonNegOr(props.seeding_time, 0)),
         addedTime: nonNegOr(info.added_on, nonNegOr(props.addition_date, 0)),
         completionOn: nonNegOr(info.completion_on, nonNegOr(props.completion_date, 0)),
@@ -356,7 +371,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
 
         files: (filesRes.data || []).map(f => this.normalizeFile(f)),
         trackers: (trackersRes.data || []).map(t => this.normalizeTracker(t)),
-        peers: peers.map(p => this.normalizePeer(p)),
+        peers,
       }
     }
 
@@ -388,8 +403,8 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       size,
       completed,
       uploaded,
-      dlLimit: num(props.dl_limit) ?? -1,
-      upLimit: num(props.up_limit) ?? -1,
+      dlLimit: normalizeLimit(props.dl_limit) ?? -1,
+      upLimit: normalizeLimit(props.up_limit) ?? -1,
       seedingTime: nonNegOr(props.seeding_time, 0),
       addedTime: nonNegOr(props.addition_date, cached?.addedTime ?? 0),
       completionOn: nonNegOr(props.completion_date, 0),
@@ -405,7 +420,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
 
       files: (filesRes.data || []).map(f => this.normalizeFile(f)),
       trackers: (trackersRes.data || []).map(t => this.normalizeTracker(t)),
-      peers: peers.map(p => this.normalizePeer(p)),
+      peers,
     }
   }
 
@@ -444,8 +459,12 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   }
 
   async setDownloadLimitBatch(hashes: string[], limit: number): Promise<void> {
+    // qB 的 setDownloadLimit 在不同端点/版本里对“无限制”的表达不完全一致（0/-1）。
+    // 这里统一：<= 0 一律按“无限制”处理，并向后端发送 0（与 downloadLimit 端点保持一致）。
+    const raw = typeof limit === 'number' && Number.isFinite(limit) ? limit : 0
+    const normalized = raw <= 0 ? 0 : Math.round(raw)
     await apiClient.post('/api/v2/torrents/setDownloadLimit', null, {
-      params: { hashes: hashes.join('|') || 'all', limit: limit.toString() }
+      params: { hashes: hashes.join('|') || 'all', limit: normalized.toString() }
     })
   }
 
@@ -454,8 +473,11 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   }
 
   async setUploadLimitBatch(hashes: string[], limit: number): Promise<void> {
+    // 同 setDownloadLimitBatch：<= 0 视为无限制，发送 0。
+    const raw = typeof limit === 'number' && Number.isFinite(limit) ? limit : 0
+    const normalized = raw <= 0 ? 0 : Math.round(raw)
     await apiClient.post('/api/v2/torrents/setUploadLimit', null, {
-      params: { hashes: hashes.join('|') || 'all', limit: limit.toString() }
+      params: { hashes: hashes.join('|') || 'all', limit: normalized.toString() }
     })
   }
 
@@ -966,16 +988,44 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     return { url: tracker.url, status, msg: tracker.msg, peers: tracker.num_peers, tier: tracker.tier }
   }
 
-  protected normalizePeer(peer: QBPeer): Peer {
+  protected normalizePeer(peer: unknown): Peer | null {
+    if (!peer || typeof peer !== 'object') return null
+    const raw = peer as unknown as Record<string, unknown>
+
+    const safeStr = (val: unknown): string => (typeof val === 'string' ? val : '')
+    const safeNum = (val: unknown): number | undefined => {
+      if (typeof val === 'number') return Number.isFinite(val) ? val : undefined
+      if (typeof val === 'string') {
+        const trimmed = val.trim()
+        if (!trimmed) return undefined
+        const parsed = Number(trimmed)
+        return Number.isFinite(parsed) ? parsed : undefined
+      }
+      return undefined
+    }
+    const nonNeg = (val: unknown): number => {
+      const n = safeNum(val)
+      return n !== undefined && n >= 0 ? n : 0
+    }
+
+    const ip = safeStr(raw.ip)
+    if (!ip) return null
+
+    const portRaw = safeNum(raw.port)
+    const port = portRaw !== undefined && portRaw >= 0 ? Math.floor(portRaw) : 0
+
+    const progressRaw = safeNum(raw.progress) ?? 0
+    const progress = Math.max(0, Math.min(1, progressRaw))
+
     return {
-      ip: peer.ip,
-      port: peer.port,
-      client: peer.client,
-      progress: peer.progress,
-      dlSpeed: peer.dl_speed,
-      upSpeed: peer.up_speed,
-      downloaded: peer.downloaded,
-      uploaded: peer.uploaded
+      ip,
+      port,
+      client: safeStr(raw.client),
+      progress,
+      dlSpeed: nonNeg(raw.dl_speed),
+      upSpeed: nonNeg(raw.up_speed),
+      downloaded: nonNeg(raw.downloaded),
+      uploaded: nonNeg(raw.uploaded),
     }
   }
 }
