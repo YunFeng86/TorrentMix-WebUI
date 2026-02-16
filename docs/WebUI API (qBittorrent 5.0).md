@@ -4,6 +4,8 @@ S M Mahmudul Hasan edited this page 11 个月前 · [4 revisions](https://github
 
 This WebUI API documentation applies to qBittorrent v5.0+. For other WebUI API versions, visit [WebUI API](https://github.com/qbittorrent/qBittorrent/wiki#WebUI-API).
 
+> 本仓库的 WebUI 适配实现备注（增量合并 / 数据清洗 / partial 降级策略）见：`docs/Adapter Notes (qBittorrent).md`
+
 # Table of Contents
 
 

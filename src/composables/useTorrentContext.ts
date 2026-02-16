@@ -231,7 +231,7 @@ export function useTorrentContext() {
     )
 
     if (deleteFiles) {
-      if (!confirm(`⚠️ 确定删除 ${moreText} 并同时删除下载文件吗？\n\n此操作不可恢复！`)) return null
+      if (!confirm(`警告：确定删除 ${moreText} 并同时删除下载文件吗？\n\n此操作不可恢复！`)) return null
     } else {
       if (!confirm(`确定删除 ${moreText} 吗？\n（仅删除种子，保留文件）`)) return null
     }

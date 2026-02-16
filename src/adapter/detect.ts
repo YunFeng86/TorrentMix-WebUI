@@ -57,6 +57,19 @@ async function probeTransmissionWithRetry(
 
   const first = await call()
 
+  // Transmission 开启 HTTP Basic Auth 时，未认证请求会返回 401。
+  // 这种情况下我们无法拿到版本，但可以确定它是 Transmission RPC 端点。
+  if (first.status === 401) {
+    // 防御：部分反代/网关会对所有路径返回 401（通用 Basic Auth），此时不应误判为 Transmission。
+    // 只有出现 Transmission 特征头时才认为命中。
+    const sessionId = getHeader(first.headers, 'x-transmission-session-id')
+    const rpcSemver = getHeader(first.headers, 'x-transmission-rpc-version')
+    const wwwAuth = getHeader(first.headers, 'www-authenticate')
+    const hasTransRealm = typeof wwwAuth === 'string' && /transmission/i.test(wwwAuth)
+    if (!sessionId && !rpcSemver && !hasTransRealm) return null
+    return { version: 'unknown', major: 0, minor: 0, patch: 0, rpcSemver, isUnknown: true }
+  }
+
   if (first.status !== 409 && first.status !== 200) return null
 
   // Transmission 4.1+ 会在 409 响应头里提供 RPC 版本信息（用于选择 JSON-RPC2 vs legacy）

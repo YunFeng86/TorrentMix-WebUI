@@ -47,6 +47,11 @@ export interface TransferSettings {
   altEnabled: boolean
   altDownloadLimit: number
   altUploadLimit: number
+  /**
+   * 是否为“部分读取成功”的结果（例如 speedLimitsMode/preferences 被 403/404/反代拦截）。
+   * 用于 UI 提示：当前显示值可能是 fallback/default，并不代表后端真实配置。
+   */
+  partial?: boolean
 }
 
 /**

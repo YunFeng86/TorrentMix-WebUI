@@ -101,6 +101,79 @@ test('version detection: Transmission 409 without Session-Id still returns rpcSe
   }
 })
 
+test('version detection: Transmission 401 (Basic Auth) with X-Transmission-Session-Id is detected as Transmission (unknown version)', async () => {
+  const detector = {
+    get: async () => ({ status: 404, data: '' }),
+    post: async () => ({
+      status: 401,
+      data: {},
+      headers: {
+        'x-transmission-session-id': 'sid',
+      },
+    }),
+  }
+
+  try {
+    mock.method(axios as any, 'create', () => detector as any)
+    const v = await detectBackendWithVersion(1000)
+    assert.equal(v.type, 'trans')
+    assert.equal(v.version, 'unknown')
+    assert.equal(v.major, 0)
+    assert.equal(v.minor, 0)
+    assert.equal(v.patch, 0)
+    assert.equal(v.isUnknown, true)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('version detection: Transmission 401 (Basic Auth) with WWW-Authenticate Transmission realm is detected as Transmission (unknown version)', async () => {
+  const detector = {
+    get: async () => ({ status: 404, data: '' }),
+    post: async () => ({
+      status: 401,
+      data: {},
+      headers: {
+        'www-authenticate': 'Basic realm=\"Transmission\"',
+      },
+    }),
+  }
+
+  try {
+    mock.method(axios as any, 'create', () => detector as any)
+    const v = await detectBackendWithVersion(1000)
+    assert.equal(v.type, 'trans')
+    assert.equal(v.version, 'unknown')
+    assert.equal(v.major, 0)
+    assert.equal(v.minor, 0)
+    assert.equal(v.patch, 0)
+    assert.equal(v.isUnknown, true)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('version detection: generic 401 without Transmission headers should not be detected as Transmission', async () => {
+  const detector = {
+    get: async () => ({ status: 401, data: '', headers: {} }),
+    post: async () => ({
+      status: 401,
+      data: {},
+      headers: { 'www-authenticate': 'Basic realm=\"Restricted\"' },
+    }),
+  }
+
+  try {
+    mock.method(axios as any, 'create', () => detector as any)
+    const v = await detectBackendWithVersion(1000)
+    assert.equal(v.type, 'qbit')
+    assert.equal(v.version, 'unknown')
+    assert.equal(v.isUnknown, true)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
 test('version detection: detectBackendWithVersionAuth does not default unknown Transmission to 4.0.0', async () => {
   const prev = process.env.VITE_BACKEND_TYPE
   process.env.VITE_BACKEND_TYPE = 'trans'

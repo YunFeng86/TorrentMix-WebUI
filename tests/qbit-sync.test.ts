@@ -210,3 +210,82 @@ test('qB sync: full_update missing categories/tags must not clear cached snapsho
     mock.restoreAll()
   }
 })
+
+test('qB sync: normalize swarm -1 to undefined (unknown) and fall back to connected counts', async () => {
+  const adapter = new QbitAdapter(DEFAULT_QBIT_FEATURES)
+
+  try {
+    mock.method(apiClient as any, 'get', async (_url: string) => ({
+      data: {
+        rid: 1,
+        full_update: true,
+        torrents: {
+          a: {
+            name: 'A',
+            state: 'pausedDL',
+            progress: 0.5,
+            size: 100,
+            dlspeed: 0,
+            upspeed: 0,
+            eta: 10,
+            ratio: 0,
+            added_on: 1,
+            save_path: '/x',
+            num_seeds: 2,
+            num_leechs: 3,
+            num_complete: -1,
+            num_incomplete: -1,
+          },
+        },
+      },
+    }))
+
+    const res = await adapter.fetchList()
+    const t = res.torrents.get('a')!
+
+    assert.equal(t.connectedSeeds, 2)
+    assert.equal(t.connectedPeers, 3)
+    assert.equal(t.totalSeeds, undefined)
+    assert.equal(t.totalPeers, undefined)
+    assert.equal(t.numSeeds, 2)
+    assert.equal(t.numPeers, 3)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('qB sync: normalizeServerState should coerce numeric strings and alt flag', async () => {
+  const adapter = new QbitAdapter(DEFAULT_QBIT_FEATURES)
+
+  try {
+    mock.method(apiClient as any, 'get', async (_url: string) => ({
+      data: {
+        rid: 1,
+        full_update: true,
+        torrents: {},
+        server_state: {
+          connection_status: 'connected',
+          dl_info_speed: '100',
+          up_info_speed: '200',
+          dl_rate_limit: '300',
+          up_rate_limit: '400',
+          peers: '5',
+          free_space_on_disk: '6',
+          use_alt_speed_limits: '1',
+        },
+      },
+    }))
+
+    const res = await adapter.fetchList()
+    assert.equal(res.serverState?.connectionStatus, 'connected')
+    assert.equal(res.serverState?.dlInfoSpeed, 100)
+    assert.equal(res.serverState?.upInfoSpeed, 200)
+    assert.equal(res.serverState?.dlRateLimit, 300)
+    assert.equal(res.serverState?.upRateLimit, 400)
+    assert.equal(res.serverState?.peers, 5)
+    assert.equal(res.serverState?.freeSpaceOnDisk, 6)
+    assert.equal(res.serverState?.useAltSpeed, true)
+  } finally {
+    mock.restoreAll()
+  }
+})

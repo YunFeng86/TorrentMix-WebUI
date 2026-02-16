@@ -15,6 +15,7 @@ export const useBackendStore = defineStore('backend', () => {
   const categories = shallowRef<Map<string, Category>>(new Map())
   const tags = shallowRef<string[]>([])
   const serverState = shallowRef<ServerState | null>(null)
+  const settingsLoadedPartial = ref(false)
 
   const isInitialized = computed(() => adapter.value !== null)
   const isQbit = computed(() => backendType.value === 'qbit')
@@ -44,6 +45,7 @@ export const useBackendStore = defineStore('backend', () => {
     categories.value = new Map()
     tags.value = []
     serverState.value = null
+    settingsLoadedPartial.value = false
   }
 
   function updateGlobalData(data: {
@@ -74,6 +76,7 @@ export const useBackendStore = defineStore('backend', () => {
     categories,
     tags,
     serverState,
+    settingsLoadedPartial,
     setAdapter,
     clearAdapter,
     updateGlobalData

@@ -1,9 +1,9 @@
-import { apiClient, silentApiClient, getQbitBaseUrl } from '@/api/client'
+import { apiClient, silentApiClient, getQbitBaseUrl, AuthError } from '@/api/client'
 import axios from 'axios'
 import type {
   UnifiedTorrent, QBTorrent, QBSyncResponse, TorrentState, Category, ServerState,
   UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
-  QBTorrentProperties, QBFile, QBTracker, QBPeer
+  QBTorrentInfo, QBTorrentGenericProperties, QBFile, QBTracker, QBPeer
 } from '../types'
 import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
 
@@ -12,6 +12,7 @@ const STATE_MAP: Record<string, TorrentState> = {
   stalledDL: 'downloading',
   metaDL: 'downloading',
   forcedDL: 'downloading',
+  allocating: 'checking',
   uploading: 'seeding',
   stalledUP: 'seeding',
   forcedUP: 'seeding',
@@ -19,6 +20,7 @@ const STATE_MAP: Record<string, TorrentState> = {
   pausedUP: 'paused',
   stoppedDL: 'paused',
   stoppedUP: 'paused',
+  unknown: 'paused',
   queuedDL: 'queued',
   queuedUP: 'queued',
   queuedForChecking: 'queued',
@@ -99,7 +101,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         const hasUpRateLimit = 'up_rate_limit' in rawState
         const hasDlInfoSpeed = 'dl_info_speed' in rawState
         const hasUpInfoSpeed = 'up_info_speed' in rawState
-        const hasUseAltSpeed = 'use_alt_speed' in rawState
+        const hasUseAltSpeed = ('use_alt_speed_limits' in rawState) || ('use_alt_speed' in rawState)
         const hasAltDlLimit = 'alt_dl_limit' in rawState
         const hasAltUpLimit = 'alt_up_limit' in rawState
         const hasConnectionStatus = 'connection_status' in rawState
@@ -249,47 +251,130 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   }
 
   async fetchDetail(hash: string): Promise<UnifiedTorrentDetail> {
-    const [propsRes, filesRes, trackersRes, peersRes] = await Promise.all([
-      apiClient.get<QBTorrentProperties>('/api/v2/torrents/properties', { params: { hash } }),
+    const infoPromise = apiClient.get<QBTorrentInfo[]>('/api/v2/torrents/info', { params: { hashes: hash } })
+      .then(res => ({ ok: true as const, data: res.data }))
+      .catch((error: unknown) => {
+        // 认证失败应直接抛出，让上层按 AuthError 处理
+        if (error instanceof AuthError) throw error
+        return { ok: false as const, error }
+      })
+
+    const [infoResult, propsRes, filesRes, trackersRes, peersRes] = await Promise.all([
+      infoPromise,
+      apiClient.get<Partial<QBTorrentGenericProperties>>('/api/v2/torrents/properties', { params: { hash } })
+        .catch(() => ({ data: {} as Partial<QBTorrentGenericProperties> })),
       apiClient.get<QBFile[]>('/api/v2/torrents/files', { params: { hash } }),
       apiClient.get<QBTracker[]>('/api/v2/torrents/trackers', { params: { hash } }),
       apiClient.get<{ peers: Record<string, QBPeer> }>('/api/v2/sync/torrentPeers', { params: { hash } })
         .catch(() => ({ data: { peers: {} } }))
     ])
 
-    const props = propsRes.data
+    const props = propsRes.data || {}
     const peers = Object.values(peersRes.data?.peers || {}) as QBPeer[]
 
+    const num = (val: unknown): number | undefined => (typeof val === 'number' && Number.isFinite(val) ? val : undefined)
+    const nonNeg = (val: unknown): number | undefined => {
+      const n = num(val)
+      return n !== undefined && n >= 0 ? n : undefined
+    }
+    const nonNegOr = (val: unknown, fallback: number): number => nonNeg(val) ?? fallback
+
+    if (infoResult.ok) {
+      const info = (infoResult.data || [])[0]
+      if (!info) {
+        throw new Error('Torrent not found')
+      }
+
+      const size = nonNeg(info.size) ?? nonNeg(info.total_size) ?? nonNeg(props.total_size) ?? 0
+      const completed = nonNeg(info.completed)
+        ?? (typeof info.progress === 'number' ? Math.round(info.progress * size) : undefined)
+        ?? nonNeg(props.total_downloaded)
+        ?? 0
+      const uploaded = nonNeg(info.uploaded) ?? nonNeg(props.total_uploaded) ?? 0
+
+      const numSeeds = nonNeg(info.num_seeds) ?? nonNeg(props.seeds) ?? peers.filter((p: QBPeer) => p.progress === 1).length
+      const numLeechers = nonNeg(info.num_leechs) ?? nonNeg(props.peers) ?? peers.filter((p: QBPeer) => p.progress >= 0 && p.progress < 1).length
+
+      const connections = nonNeg(props.nb_connections) ?? (numSeeds + numLeechers)
+
+      return {
+        hash: info.hash,
+        name: info.name,
+        size,
+        completed,
+        uploaded,
+        dlLimit: num(info.dl_limit) ?? num(props.dl_limit) ?? -1,
+        upLimit: num(info.up_limit) ?? num(props.up_limit) ?? -1,
+        seedingTime: nonNegOr(info.seeding_time, nonNegOr(props.seeding_time, 0)),
+        addedTime: nonNegOr(info.added_on, nonNegOr(props.addition_date, 0)),
+        completionOn: nonNegOr(info.completion_on, nonNegOr(props.completion_date, 0)),
+        savePath: (typeof info.save_path === 'string' ? info.save_path : (props.save_path ?? '')),
+        category: typeof info.category === 'string' ? info.category : '',
+        tags: typeof info.tags === 'string' ? info.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+
+        // 实际连接数（优先使用 qB 的统计；否则用 seeds+leechers 的可用值）
+        connections,
+
+        // 已连接的 seeds/leechers（优先使用 info/properties 的统计；否则从 peers 数组推断）
+        numSeeds,
+        numLeechers,
+
+        // Swarm 统计（整个 swarm 的总数）
+        totalSeeds: nonNeg(info.num_complete) ?? nonNeg(props.seeds_total),
+        totalLeechers: nonNeg(info.num_incomplete) ?? nonNeg(props.peers_total),
+
+        files: (filesRes.data || []).map(f => this.normalizeFile(f)),
+        trackers: (trackersRes.data || []).map(t => this.normalizeTracker(t)),
+        peers: peers.map(p => this.normalizePeer(p)),
+      }
+    }
+
+    // /torrents/info 失败：只对“端点不存在/反代拦截/服务器错误”等场景做降级，避免把真实错误吞掉
+    const status = (infoResult.error as any)?.response?.status
+    if (status !== 404 && status !== 405 && status !== 500) {
+      throw infoResult.error
+    }
+
+    const cached = this.currentMap.get(hash)
+    if (!cached && Object.keys(props).length === 0) {
+      throw infoResult.error
+    }
+
+    const size = nonNeg(props.total_size) ?? nonNeg(cached?.size) ?? 0
+    const completed = nonNeg(props.total_downloaded)
+      ?? (typeof cached?.progress === 'number' ? Math.round(cached.progress * size) : 0)
+    const uploaded = nonNeg(props.total_uploaded)
+      ?? (typeof cached?.ratio === 'number' ? Math.round(cached.ratio * completed) : 0)
+
+    const numSeeds = nonNeg(props.seeds) ?? nonNeg(cached?.connectedSeeds) ?? 0
+    const numLeechers = nonNeg(props.peers) ?? nonNeg(cached?.connectedPeers) ?? 0
+    const connections = nonNeg(props.nb_connections) ?? (numSeeds + numLeechers)
+
     return {
-      hash: props.hash,
-      name: props.name,
-      size: props.size,
-      completed: props.completed,
-      uploaded: props.uploaded,
-      dlLimit: props.dl_limit,
-      upLimit: props.up_limit,
-      seedingTime: props.seeding_time,
-      addedTime: props.added_on,
-      completionOn: props.completion_on,
-      savePath: props.save_path,
-      category: props.category,
-      tags: props.tags ? props.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+      hash,
+      name: cached?.name ?? hash,
+      partial: true,
+      size,
+      completed,
+      uploaded,
+      dlLimit: num(props.dl_limit) ?? -1,
+      upLimit: num(props.up_limit) ?? -1,
+      seedingTime: nonNegOr(props.seeding_time, 0),
+      addedTime: nonNegOr(props.addition_date, cached?.addedTime ?? 0),
+      completionOn: nonNegOr(props.completion_date, 0),
+      savePath: props.save_path ?? cached?.savePath ?? '',
+      category: cached?.category ?? '',
+      tags: cached?.tags ?? [],
 
-      // 实际连接数（从 peers 数组统计）
-      // 注意：sync/torrentPeers 返回可能受数量/分页限制，统计值未必等于真实全量连接数
-      connections: peers.length,
-
-      // 已连接的 seeds/leechers（从 peers 数组过滤）
-      numSeeds: peers.filter((p: QBPeer) => p.progress === 1).length,
-      numLeechers: peers.filter((p: QBPeer) => p.progress >= 0 && p.progress < 1).length,
-
-      // Swarm 统计（整个 swarm 的总数）
-      totalSeeds: props.num_complete,
-      totalLeechers: props.num_incomplete,
+      connections,
+      numSeeds,
+      numLeechers,
+      totalSeeds: nonNeg(props.seeds_total) ?? cached?.totalSeeds,
+      totalLeechers: nonNeg(props.peers_total) ?? cached?.totalPeers,
 
       files: (filesRes.data || []).map(f => this.normalizeFile(f)),
       trackers: (trackersRes.data || []).map(t => this.normalizeTracker(t)),
-      peers: peers.map(p => this.normalizePeer(p))
+      peers: peers.map(p => this.normalizePeer(p)),
     }
   }
 
@@ -478,14 +563,39 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   // ========== 全局/备用限速设置 ==========
 
   async getTransferSettings(): Promise<TransferSettings> {
-    const res = await apiClient.get<QBSyncResponse>('/api/v2/sync/maindata', { params: { rid: 0 } })
-    const state = this.normalizeServerState(res.data.server_state)
+    let speedModeFailed = false
+    let prefsFailed = false
+
+    const [maindataRes, speedModeRes, prefsRes] = await Promise.all([
+      apiClient.get<QBSyncResponse>('/api/v2/sync/maindata', { params: { rid: 0 } }),
+      apiClient.get('/api/v2/transfer/speedLimitsMode').catch(() => {
+        speedModeFailed = true
+        return { data: null }
+      }),
+      apiClient.get<Record<string, unknown>>('/api/v2/app/preferences').catch(() => {
+        prefsFailed = true
+        return { data: {} as Record<string, unknown> }
+      }),
+    ])
+
+    const state = this.normalizeServerState(maindataRes.data.server_state)
+    const mode = speedModeRes.data
+    const modeNum = typeof mode === 'number' ? mode : Number.parseInt(String(mode), 10)
+    const modeKnown = Number.isFinite(modeNum)
+    const altEnabled = modeKnown ? modeNum === 1 : (state?.useAltSpeed ?? false)
+
+    const prefs = prefsRes.data || {}
+    const altDlKib = typeof prefs.alt_dl_limit === 'number' && Number.isFinite(prefs.alt_dl_limit) ? prefs.alt_dl_limit : 0
+    const altUpKib = typeof prefs.alt_up_limit === 'number' && Number.isFinite(prefs.alt_up_limit) ? prefs.alt_up_limit : 0
+    const partial = speedModeFailed || prefsFailed || !modeKnown
+
     return {
       downloadLimit: state?.dlRateLimit ?? 0,
       uploadLimit: state?.upRateLimit ?? 0,
-      altEnabled: state?.useAltSpeed ?? false,
-      altDownloadLimit: state?.altDlLimit ?? 0,
-      altUploadLimit: state?.altUpLimit ?? 0
+      altEnabled,
+      altDownloadLimit: Math.max(0, Math.round(altDlKib)) * 1024,
+      altUploadLimit: Math.max(0, Math.round(altUpKib)) * 1024,
+      ...(partial ? { partial: true } : {}),
     }
   }
 
@@ -497,13 +607,50 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       await apiClient.post('/api/v2/transfer/setUploadLimit', null, { params: { limit: patch.uploadLimit } })
     }
     if (typeof patch.altEnabled === 'boolean') {
-      await apiClient.post('/api/v2/transfer/setSpeedLimitsMode', null, { params: { mode: patch.altEnabled ? 1 : 0 } })
+      // 文档接口：speedLimitsMode + toggleSpeedLimitsMode（无 set）
+      // 兼容：若后端提供 setSpeedLimitsMode，则优先使用它
+      try {
+        await apiClient.post('/api/v2/transfer/setSpeedLimitsMode', null, { params: { mode: patch.altEnabled ? 1 : 0 } })
+      } catch (error: any) {
+        const status = error?.response?.status
+        if (status !== 404 && status !== 405) throw error
+
+        const res = await apiClient.get('/api/v2/transfer/speedLimitsMode').catch(() => ({ data: 0 }))
+        const mode = res.data
+        const modeNum = typeof mode === 'number' ? mode : Number.parseInt(String(mode), 10)
+        const currentEnabled = Number.isFinite(modeNum) ? modeNum === 1 : false
+        if (currentEnabled !== patch.altEnabled) {
+          await apiClient.post('/api/v2/transfer/toggleSpeedLimitsMode')
+        }
+      }
     }
     if (typeof patch.altDownloadLimit === 'number' || typeof patch.altUploadLimit === 'number') {
-      const current = await this.getTransferSettings()
-      const downloadLimit = typeof patch.altDownloadLimit === 'number' ? patch.altDownloadLimit : current.altDownloadLimit
-      const uploadLimit = typeof patch.altUploadLimit === 'number' ? patch.altUploadLimit : current.altUploadLimit
-      await apiClient.post('/api/v2/transfer/setAlternativeSpeedLimits', null, { params: { downloadLimit, uploadLimit } })
+      // 文档接口：备用限速值在 preferences 里（KiB/s）
+      // 兼容：若后端提供 transfer/setAlternativeSpeedLimits，则优先使用它
+      const downloadLimit = typeof patch.altDownloadLimit === 'number' ? patch.altDownloadLimit : undefined
+      const uploadLimit = typeof patch.altUploadLimit === 'number' ? patch.altUploadLimit : undefined
+
+      if (downloadLimit !== undefined && uploadLimit !== undefined) {
+        try {
+          await apiClient.post('/api/v2/transfer/setAlternativeSpeedLimits', null, { params: { downloadLimit, uploadLimit } })
+          return
+        } catch (error: any) {
+          const status = error?.response?.status
+          if (status !== 404 && status !== 405) throw error
+        }
+      }
+
+      const qbPrefs: Record<string, unknown> = {}
+      if (downloadLimit !== undefined) qbPrefs.alt_dl_limit = Math.max(0, Math.round(downloadLimit / 1024))
+      if (uploadLimit !== undefined) qbPrefs.alt_up_limit = Math.max(0, Math.round(uploadLimit / 1024))
+
+      if (Object.keys(qbPrefs).length === 0) return
+
+      const params = new URLSearchParams()
+      params.append('json', JSON.stringify(qbPrefs))
+      await apiClient.post('/api/v2/app/setPreferences', params, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      })
     }
   }
 
@@ -670,17 +817,30 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     if (!raw || typeof raw !== 'object') return undefined
     const state = raw as Record<string, unknown>
     const conn = String(state.connection_status ?? '')
+    const alt = state.use_alt_speed_limits ?? state.use_alt_speed
+
+    const safeNum = (val: unknown, fallback = 0): number => {
+      const n = typeof val === 'number' ? val : Number(val)
+      return Number.isFinite(n) ? n : fallback
+    }
+    const safeBool = (val: unknown, fallback = false): boolean => {
+      if (typeof val === 'boolean') return val
+      if (val === 1 || val === '1' || val === 'true') return true
+      if (val === 0 || val === '0' || val === 'false') return false
+      return fallback
+    }
+
     return {
-      dlInfoSpeed: (state.dl_info_speed as number) ?? 0,
-      upInfoSpeed: (state.up_info_speed as number) ?? 0,
-      dlRateLimit: (state.dl_rate_limit as number) ?? 0,
-      upRateLimit: (state.up_rate_limit as number) ?? 0,
+      dlInfoSpeed: safeNum(state.dl_info_speed),
+      upInfoSpeed: safeNum(state.up_info_speed),
+      dlRateLimit: safeNum(state.dl_rate_limit),
+      upRateLimit: safeNum(state.up_rate_limit),
       connectionStatus: conn === 'connected' ? 'connected' : conn === 'firewalled' ? 'firewalled' : 'disconnected',
-      peers: (state.peers as number) ?? 0,
-      freeSpaceOnDisk: (state.free_space_on_disk as number) ?? 0,
-      useAltSpeed: (state.use_alt_speed as boolean) ?? false,
-      altDlLimit: (state.alt_dl_limit as number) ?? 0,
-      altUpLimit: (state.alt_up_limit as number) ?? 0
+      peers: safeNum(state.peers),
+      freeSpaceOnDisk: safeNum(state.free_space_on_disk),
+      useAltSpeed: safeBool(alt),
+      altDlLimit: safeNum(state.alt_dl_limit),
+      altUpLimit: safeNum(state.alt_up_limit),
     }
   }
 
@@ -701,10 +861,14 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     const hasTotalSeeds = 'num_complete' in rawAny
     const hasTotalPeers = 'num_incomplete' in rawAny
 
-    const connectedSeeds = hasConnectedSeeds ? ((rawAny.num_seeds as number | undefined) ?? 0) : existing?.connectedSeeds
-    const connectedPeers = hasConnectedPeers ? ((rawAny.num_leechs as number | undefined) ?? 0) : existing?.connectedPeers
-    const totalSeeds = hasTotalSeeds ? ((rawAny.num_complete as number | undefined) ?? 0) : existing?.totalSeeds
-    const totalPeers = hasTotalPeers ? ((rawAny.num_incomplete as number | undefined) ?? 0) : existing?.totalPeers
+    const normalizeCount = (val: unknown): number | undefined => (
+      typeof val === 'number' && Number.isFinite(val) && val >= 0 ? val : undefined
+    )
+
+    const connectedSeeds = hasConnectedSeeds ? normalizeCount(rawAny.num_seeds) : existing?.connectedSeeds
+    const connectedPeers = hasConnectedPeers ? normalizeCount(rawAny.num_leechs) : existing?.connectedPeers
+    const totalSeeds = hasTotalSeeds ? normalizeCount(rawAny.num_complete) : existing?.totalSeeds
+    const totalPeers = hasTotalPeers ? normalizeCount(rawAny.num_incomplete) : existing?.totalPeers
 
     const bestSeeds = totalSeeds ?? connectedSeeds
     const bestPeers = totalPeers ?? connectedPeers

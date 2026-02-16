@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, toRaw, watch } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { TransferSettings, BackendPreferences, BackendCapabilities } from '@/adapter/interface'
+import Icon from '@/components/Icon.vue'
 import SeedingTab from './settings/tabs/SeedingTab.vue'
 import PathsTab from './settings/tabs/PathsTab.vue'
 
@@ -26,6 +27,7 @@ const activeTab = ref<TabId>('transfer')
 const loading = ref(false)
 const saving = ref(false)
 const error = ref('')
+const transferPartial = ref(false)
 
 const contentScrollRef = ref<HTMLElement | null>(null)
 const tabScrollTops = ref<Partial<Record<TabId, number>>>({})
@@ -204,6 +206,8 @@ async function load() {
   }
   loading.value = true
   error.value = ''
+  transferPartial.value = false
+  backendStore.settingsLoadedPartial = false
   try {
     saveScrollTop(activeTab.value)
     // 并行加载传输设置和偏好设置
@@ -211,6 +215,9 @@ async function load() {
       adapter.value.getTransferSettings(),
       adapter.value.getPreferences()
     ])
+
+    transferPartial.value = Boolean(transferSettings.partial)
+    backendStore.settingsLoadedPartial = transferPartial.value
 
     transferForm.value = {
       downloadKbps: toKbps(transferSettings.downloadLimit),
@@ -354,6 +361,11 @@ onMounted(() => {
 
             <!-- 带宽 Tab -->
             <div v-if="activeTab === 'transfer'" class="space-y-4">
+              <div v-if="transferPartial" class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex gap-2">
+                <Icon name="alert-triangle" :size="16" class="shrink-0 mt-0.5" />
+                <div>部分传输设置读取失败，当前显示值可能不准确（0 可能是占位）；保存只会写入你修改过的字段。</div>
+              </div>
+
               <div class="card p-4">
                 <div class="flex items-center justify-between mb-3">
                   <div class="text-sm font-medium text-gray-900">全局限速</div>

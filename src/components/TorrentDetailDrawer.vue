@@ -62,7 +62,10 @@ defineExpose({
 // 计算属性
 const progressPercent = computed(() => {
   if (!detail.value) return 0
-  return Math.round((detail.value.completed / detail.value.size) * 100)
+  if (detail.value.size <= 0) return 0
+  const raw = detail.value.completed / detail.value.size
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(raw) ? raw : 0))
+  return Math.round(clamped * 100)
 })
 
 const ratio = computed(() => {
@@ -72,7 +75,8 @@ const ratio = computed(() => {
 
 const remaining = computed(() => {
   if (!detail.value) return 0
-  return detail.value.size - detail.value.completed
+  // 防御：后端可能返回 completed > size 的异常数据，避免出现负数展示
+  return Math.max(0, detail.value.size - detail.value.completed)
 })
 
 // Tracker 状态映射
@@ -126,7 +130,7 @@ async function handleDelete() {
     `是否同时删除下载文件？\n\n种子：${detail.value.name}`
   )
   if (deleteFiles) {
-    if (!confirm(`⚠️ 确定删除并删除文件吗？\n\n此操作不可恢复！`)) return
+    if (!confirm(`警告：确定删除并删除文件吗？\n\n此操作不可恢复！`)) return
   } else {
     if (!confirm(`确定删除种子吗？\n（仅删除种子，保留文件）`)) return
   }
@@ -311,8 +315,13 @@ function handleClickOutside() {
 
             <!-- Tab 内容 -->
             <div class="flex-1 overflow-y-auto p-6">
-              <!-- 信息 Tab -->
+             <!-- 信息 Tab -->
               <div v-if="activeTab === 'info'" class="space-y-4">
+                <div v-if="detail.partial" class="p-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 flex gap-2">
+                  <Icon name="alert-triangle" :size="16" class="shrink-0 mt-0.5" />
+                  <div>部分详情读取失败，当前显示值可能来自缓存或降级数据；建议刷新或检查反代/权限配置。</div>
+                </div>
+
                 <!-- 进度 -->
                 <div>
                   <div class="flex justify-between text-sm mb-1">

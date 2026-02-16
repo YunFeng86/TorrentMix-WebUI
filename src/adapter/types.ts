@@ -97,7 +97,7 @@ export interface QBSyncResponse {
   full_update?: boolean;
   torrents?: Record<string, Partial<QBTorrent>>;
   torrents_removed?: string[];
-  categories?: Record<string, { savePath: string }>;
+  categories?: Record<string, { name?: string; savePath: string }>;
   categories_removed?: string[];
   tags?: string[];
   tags_removed?: string[];
@@ -106,16 +106,27 @@ export interface QBSyncResponse {
 
 // qBittorrent server_state 结构
 export interface QBServerState {
-  dl_info_speed: number;
-  up_info_speed: number;
-  dl_rate_limit: number;
-  up_rate_limit: number;
-  connection_status: string;
-  peers: number;
-  free_space_on_disk: number;
-  use_alt_speed: boolean;
-  alt_dl_limit: number;
-  alt_up_limit: number;
+  // NOTE: /sync/maindata 的 server_state 往往是“增量字段”，很多字段可能缺失。
+  // 因此这里全部定义为可选，调用方需用 `'key' in raw` 区分“缺失”与“值为 0”。
+  dl_info_speed?: number;
+  dl_info_data?: number;
+  up_info_speed?: number;
+  up_info_data?: number;
+  dl_rate_limit?: number;
+  up_rate_limit?: number;
+  dht_nodes?: number;
+  connection_status?: string;
+  peers?: number;
+  free_space_on_disk?: number;
+  queueing?: boolean;
+  refresh_interval?: number;
+  // 文档字段（transferInfo/server_state）：是否启用备用限速
+  use_alt_speed_limits?: boolean;
+  // 兼容：部分实现可能使用非文档字段名
+  use_alt_speed?: boolean;
+  // 兼容：部分实现可能附带备用限速值（通常在 preferences 里）
+  alt_dl_limit?: number;
+  alt_up_limit?: number;
 }
 
 // ============ 种子详情相关接口 ============
@@ -125,6 +136,11 @@ export interface UnifiedTorrentDetail {
   // 基本信息
   hash: string
   name: string
+  /**
+   * 是否为“部分读取成功”的结果（某些端点被 404/403/反代拦截等场景）。
+   * 用于 UI 提示：当前展示值可能是 fallback/default，并不代表后端真实数据。
+   */
+  partial?: boolean
   size: number
   completed: number      // 已下载字节数
   uploaded: number       // 已上传字节数
@@ -182,24 +198,65 @@ export interface Peer {
   uploaded: number
 }
 
-// qBittorrent 种子属性响应
-export interface QBTorrentProperties {
+// qBittorrent /torrents/info 响应（只列出详情页用到的字段）
+export interface QBTorrentInfo {
   hash: string
   name: string
-  size: number
-  completed: number
-  uploaded: number
-  dl_limit: number
-  up_limit: number
-  seeding_time: number
-  added_on: number
-  completion_on: number
+  size?: number
+  total_size?: number
+  progress?: number
+  completed?: number
+  uploaded?: number
+  dl_limit?: number
+  up_limit?: number
+  seeding_time?: number
+  added_on?: number
+  completion_on?: number
+  save_path?: string
+  category?: string
+  tags?: string
+  num_seeds?: number
+  num_leechs?: number
+  num_complete?: number
+  num_incomplete?: number
+}
+
+// qBittorrent /torrents/properties（Get torrent generic properties）响应
+export interface QBTorrentGenericProperties {
   save_path: string
-  category: string
-  tags: string
-  connections_limit: number
-  num_complete: number
-  num_incomplete: number
+  creation_date: number
+  piece_size: number
+  comment: string
+  total_wasted: number
+  total_uploaded: number
+  total_uploaded_session: number
+  total_downloaded: number
+  total_downloaded_session: number
+  up_limit: number
+  dl_limit: number
+  time_elapsed: number
+  seeding_time: number
+  nb_connections: number
+  nb_connections_limit: number
+  share_ratio: number
+  addition_date: number
+  completion_date: number
+  created_by: string
+  dl_speed_avg: number
+  dl_speed: number
+  eta: number
+  last_seen: number
+  peers: number
+  peers_total: number
+  pieces_have: number
+  pieces_num: number
+  reannounce: number
+  seeds: number
+  seeds_total: number
+  total_size: number
+  up_speed_avg: number
+  up_speed: number
+  isPrivate: boolean
 }
 
 // qBittorrent 文件信息
