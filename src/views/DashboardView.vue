@@ -23,6 +23,7 @@ import ColumnSettingsDialog from '@/components/ColumnSettingsDialog.vue'
 import BackendSettingsDialog from '@/components/BackendSettingsDialog.vue'
 import CategoryManageDialog from '@/components/CategoryManageDialog.vue'
 import TagManageDialog from '@/components/TagManageDialog.vue'
+import FolderTree from '@/components/FolderTree.vue'
 import Icon from '@/components/Icon.vue'
 import TorrentContextMenu from '@/components/torrent/contextmenu/TorrentContextMenu.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
@@ -66,6 +67,10 @@ const isMobile = ref(window.innerWidth < 768)
 const windowWidth = ref(window.innerWidth)
 const tableScrollRef = ref<HTMLElement | null>(null)
 const mobileScrollRef = ref<HTMLElement | null>(null)
+
+const transFolderPaths = computed(() =>
+  Array.from(backendStore.categories.values()).map(c => c.name)
+)
 
 type ScrollAnchor = {
   id?: string
@@ -845,10 +850,21 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <!-- 分类筛选 (qB only) -->
-          <div v-if="backendStore.isQbit && backendStore.categories.size > 0" :class="`mt-4 ${sidebarCollapsed ? 'hidden' : ''}`">
-            <h3 :class="`text-xs font-medium text-gray-500 uppercase tracking-wider px-3 mb-2`">分类</h3>
-            <div class="space-y-1">
+          <!-- 分类/目录筛选 -->
+          <div v-if="backendStore.categories.size > 0" :class="`mt-4 ${sidebarCollapsed ? 'hidden' : ''}`">
+            <h3 :class="`text-xs font-medium text-gray-500 uppercase tracking-wider px-3 mb-2`">
+              {{ backendStore.isTrans ? '目录' : '分类' }}
+            </h3>
+
+            <FolderTree
+              v-if="backendStore.isTrans"
+              v-model="categoryFilter"
+              :paths="transFolderPaths"
+              all-label="全部目录"
+              root-label="默认目录"
+            />
+
+            <div v-else class="space-y-1">
               <button @click="categoryFilter = 'all'"
                       :class="`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-left transition-all duration-150 ${categoryFilter === 'all' ? 'bg-gray-900 text-white' : 'text-gray-700 hover:bg-gray-100'}`">
                 <Icon name="folder" :size="14" />
@@ -863,8 +879,8 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- 标签筛选 (qB only) -->
-          <div v-if="backendStore.isQbit && backendStore.tags.length > 0" :class="`mt-4 ${sidebarCollapsed ? 'hidden' : ''}`">
+          <!-- 标签筛选 -->
+          <div v-if="backendStore.tags.length > 0" :class="`mt-4 ${sidebarCollapsed ? 'hidden' : ''}`">
             <h3 :class="`text-xs font-medium text-gray-500 uppercase tracking-wider px-3 mb-2`">标签</h3>
             <div class="flex flex-wrap gap-2 px-3">
               <button @click="tagFilter = 'all'"

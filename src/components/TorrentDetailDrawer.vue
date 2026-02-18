@@ -5,6 +5,7 @@ import type { UnifiedTorrentDetail } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
 import SafeText from '@/components/SafeText.vue'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
+import { VIRTUAL_ROOT_EXTERNAL, VIRTUAL_ROOT_EXTERNAL_PREFIX } from '@/utils/folderTree'
 
 interface Props {
   open: boolean
@@ -77,6 +78,26 @@ const remaining = computed(() => {
   if (!detail.value) return 0
   // 防御：后端可能返回 completed > size 的异常数据，避免出现负数展示
   return Math.max(0, detail.value.size - detail.value.completed)
+})
+
+const categoryDisplay = computed(() => {
+  const raw = detail.value?.category ?? ''
+  if (!raw) return ''
+  if (!backendStore.isTrans) return raw
+  if (raw === VIRTUAL_ROOT_EXTERNAL) return '外部目录'
+  if (raw.startsWith(VIRTUAL_ROOT_EXTERNAL_PREFIX)) {
+    const rest = raw.slice(VIRTUAL_ROOT_EXTERNAL_PREFIX.length)
+    return rest ? `外部目录/${rest}` : '外部目录'
+  }
+  return raw
+})
+
+const categoryIcon = computed(() => {
+  const raw = detail.value?.category ?? ''
+  if (backendStore.isTrans && (raw === VIRTUAL_ROOT_EXTERNAL || raw.startsWith(VIRTUAL_ROOT_EXTERNAL_PREFIX))) {
+    return 'globe'
+  }
+  return 'folder'
 })
 
 // Tracker 状态映射
@@ -379,8 +400,8 @@ function handleClickOutside() {
                 <!-- 分类和标签 -->
                 <div v-if="detail.category || detail.tags.length > 0" class="bg-gray-50 rounded-lg p-4">
                   <div v-if="detail.category" class="flex items-center gap-2 mb-2">
-                    <Icon name="folder" :size="16" class="text-gray-500" />
-                    <span class="text-sm">{{ detail.category }}</span>
+                    <Icon :name="categoryIcon" :size="16" class="text-gray-500" />
+                    <span class="text-sm">{{ categoryDisplay }}</span>
                   </div>
                   <div v-if="detail.tags.length > 0" class="flex flex-wrap gap-2">
                     <span

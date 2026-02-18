@@ -30,7 +30,7 @@ const category = ref('')
 const tags = ref<string[]>([])
 const tagInput = ref('')
 
-// 可用分类列表（qB only）
+// 可用分类列表（来自后端接口/列表聚合）
 const availableCategories = computed(() =>
   Array.from(backendStore.categories.values()).map(c => c.name)
 )
@@ -110,7 +110,7 @@ async function handleSubmit() {
   if (skipChecking.value) {
     params.skip_checking = true
   }
-  if (category.value.trim()) {
+  if (backendStore.isQbit && category.value.trim()) {
     params.category = category.value.trim()
   }
   if (tags.value.length > 0) {
@@ -248,7 +248,7 @@ async function handleSubmit() {
 
               <!-- 选项 -->
               <div class="mt-6 space-y-4 pt-6 border-t border-gray-200">
-                <!-- 分类选择 (qB only) -->
+                <!-- 分类（可选） -->
                 <div v-if="backendStore.isQbit">
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     分类（可选）
@@ -264,8 +264,8 @@ async function handleSubmit() {
                   </select>
                 </div>
 
-                <!-- 标签输入 (qB only) -->
-                <div v-if="backendStore.isQbit">
+                <!-- 标签输入 -->
+                <div>
                   <label class="block text-sm font-medium text-gray-700 mb-1">
                     标签（可选）
                   </label>
@@ -293,11 +293,14 @@ async function handleSubmit() {
                       placeholder="输入标签后按回车添加"
                     />
                   </div>
+                  <p v-if="backendStore.isTrans" class="text-xs text-gray-500 mt-1">
+                    Transmission：标签会作为 labels 存储
+                  </p>
                 </div>
 
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-1">
-                    保存路径（可选）
+                    {{ backendStore.isTrans ? '下载目录（可选）' : '保存路径（可选）' }}
                   </label>
                   <input
                     v-model="savePath"

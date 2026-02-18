@@ -79,6 +79,9 @@ const backendLabel = computed(() => {
 
 const localDiscoveryLabel = computed(() => (backendLabel.value === 'Transmission' ? 'LPD（本地发现）' : 'LSD（本地发现）'))
 
+const speedBytes = ref(1024)
+const speedUnitLabel = computed(() => (speedBytes.value === 1000 ? 'kB/s' : 'KiB/s'))
+
 function toStableObject(input: unknown): unknown {
   if (input === null || typeof input !== 'object') return input
   if (Array.isArray(input)) return input.map(toStableObject)
@@ -185,11 +188,11 @@ const tabs = computed(() => {
 })
 
 function toKbps(bytesPerSecond: number) {
-  return Math.max(0, Math.round(bytesPerSecond / 1024))
+  return Math.max(0, Math.round(bytesPerSecond / speedBytes.value))
 }
 
 function toBps(kbps: number) {
-  return Math.max(0, Math.round(kbps)) * 1024
+  return Math.max(0, Math.round(kbps)) * speedBytes.value
 }
 
 function resetToLoaded() {
@@ -218,6 +221,8 @@ async function load() {
 
     transferPartial.value = Boolean(transferSettings.partial)
     backendStore.settingsLoadedPartial = transferPartial.value
+
+    speedBytes.value = transferSettings.speedBytes ?? 1024
 
     transferForm.value = {
       downloadKbps: toKbps(transferSettings.downloadLimit),
@@ -369,7 +374,7 @@ onMounted(() => {
               <div class="card p-4">
                 <div class="flex items-center justify-between mb-3">
                   <div class="text-sm font-medium text-gray-900">全局限速</div>
-                  <div class="text-xs text-gray-500">单位：KB/s（0 表示不限制）</div>
+                  <div class="text-xs text-gray-500">单位：{{ speedUnitLabel }}（0 表示不限制）</div>
                 </div>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <label class="space-y-1">

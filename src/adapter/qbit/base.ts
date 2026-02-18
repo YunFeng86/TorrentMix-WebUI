@@ -648,6 +648,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       altEnabled,
       altDownloadLimit: Math.max(0, Math.round(altDlKib)) * 1024,
       altUploadLimit: Math.max(0, Math.round(altUpKib)) * 1024,
+      speedBytes: 1024,
       ...(partial ? { partial: true } : {}),
     }
   }

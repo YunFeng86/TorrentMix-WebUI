@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import { useBackendStore } from './backend'
 import type { BaseAdapter } from '@/adapter/interface'
 import { detectBackendTypeOnly, detectBackendWithVersionAuth, type BackendType, type BackendVersion } from '@/adapter/detect'
-import { createAdapterByType, saveVersionCache, clearVersionCache, createAdapter, rebootAdapterWithAuth } from '@/adapter/factory'
+import { createAdapterByType, saveVersionCache, clearVersionCache, createAdapter, rebootAdapterWithAuth, resolveQbitFeatures } from '@/adapter/factory'
 import { QbitAdapter, DEFAULT_QBIT_FEATURES } from '@/adapter/qbit'
 import { TransAdapter } from '@/adapter/trans/index'
 
@@ -88,13 +88,7 @@ export const useAuthStore = defineStore('auth', () => {
       // 第六步：基于版本信息构建最终适配器
       let finalAdapter: BaseAdapter = adapter
       if (finalVersion.type === 'qbit') {
-        const features = finalVersion.features || {
-          ...d.DEFAULT_QBIT_FEATURES,
-          pauseEndpoint: finalVersion.major >= 5 ? 'stop' : 'pause',
-          resumeEndpoint: finalVersion.major >= 5 ? 'start' : 'resume',
-          isLegacy: finalVersion.major < 5
-        }
-        finalAdapter = new d.QbitAdapter(features)
+        finalAdapter = new d.QbitAdapter(resolveQbitFeatures(finalVersion))
       } else if (finalVersion.type === 'trans') {
         finalAdapter = new d.TransAdapter({ rpcSemver: finalVersion.rpcSemver })
       }

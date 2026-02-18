@@ -48,6 +48,13 @@ export interface TransferSettings {
   altDownloadLimit: number
   altUploadLimit: number
   /**
+   * 速度单位换算：1 KB 对应的字节数（1000 for kB；1024 for KiB）。
+   *
+   * - Transmission: 来自 session-get 的 units.speed_bytes
+   * - qBittorrent: 统一按 KiB（1024）处理
+   */
+  speedBytes?: number
+  /**
    * 是否为“部分读取成功”的结果（例如 speedLimitsMode/preferences 被 403/404/反代拦截）。
    * 用于 UI 提示：当前显示值可能是 fallback/default，并不代表后端真实配置。
    */

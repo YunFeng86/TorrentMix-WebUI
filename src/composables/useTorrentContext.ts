@@ -163,11 +163,21 @@ export function useTorrentContext() {
       result = filtered
     }
 
-    // 分类过滤
+    // 分类/目录过滤
     if (categoryFilter.value !== 'all') {
       const filtered = new Map<string, UnifiedTorrent>()
+      const selected = categoryFilter.value
       for (const [hash, torrent] of result) {
-        if (torrent.category === categoryFilter.value) filtered.set(hash, torrent)
+        const category = torrent.category ?? ''
+        if (backendStore.isTrans) {
+          if (selected === '') {
+            if (category === '') filtered.set(hash, torrent)
+          } else if (category === selected || category.startsWith(`${selected}/`)) {
+            filtered.set(hash, torrent)
+          }
+        } else {
+          if (category === selected) filtered.set(hash, torrent)
+        }
       }
       result = filtered
     }

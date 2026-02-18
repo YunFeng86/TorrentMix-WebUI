@@ -12,7 +12,7 @@ export interface CachedVersion extends BackendVersion {
   isUnknown?: boolean  // 是否为未知版本（未认证时）
 }
 
-function resolveQbitFeatures(
+export function resolveQbitFeatures(
   version: BackendVersion
 ): QbitFeatures {
   if (version.type !== 'qbit') return DEFAULT_QBIT_FEATURES

@@ -1,6 +1,7 @@
 import { transClient } from '@/api/trans-client'
 import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
 import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
+import { VIRTUAL_ROOT_EXTERNAL, VIRTUAL_ROOT_EXTERNAL_PREFIX } from '@/utils/folderTree'
 
 /**
  * Transmission RPC 方法名映射（json-rpc2 vs legacy）
@@ -97,6 +98,10 @@ interface TRTrackerStat {
 interface TRPeer {
   address: string
   port: number
+  bytesToClient?: number
+  bytes_to_client?: number
+  bytesToPeer?: number
+  bytes_to_peer?: number
   clientName?: string
   client_name?: string
   progress?: number
@@ -202,12 +207,21 @@ const STATE_MAP: Record<number, TorrentState> = {
  * - 支持 JSON-RPC 2.0 (TR 4.1+) 和旧协议 (TR 4.0.x)
  * - 状态用数字枚举，需要映射到 TorrentState
  * - 进度使用 percent_done/percentDone (0-1)
- * - 使用 labels 数组，第一个元素作为 category
+ * - labels 只作为 tags（Transmission 本身没有 Category 概念）
  */
 export class TransAdapter implements BaseAdapter {
   private protocolVersion: 'json-rpc2' | 'legacy' = 'legacy'
   private currentMap = new Map<string, UnifiedTorrent>()
   private supportsLabels = true
+  private speedBytes = 1024
+  private defaultDownloadDir: string | null = null
+  private defaultDownloadDirNormalized = ''
+  private defaultDownloadDirSegments: string[] = []
+  private warnedDirCaseMismatch = false
+  private speedBytesState: 'unknown' | 'loading' | 'ready' = 'unknown'
+  private speedBytesPromise: Promise<void> | null = null
+  private speedBytesEagerLoaded = false
+  private tagsMutationChain: Promise<void> = Promise.resolve()
 
   constructor(versionInfo?: { rpcSemver?: string }) {
     // 根据 rpc-version-semver 判断协议版本和可用字段
@@ -233,6 +247,102 @@ export class TransAdapter implements BaseAdapter {
     this.supportsLabels = major > 5 || (major === 5 && minor >= 2)
   }
 
+  private normalizeLabels(labels?: string[]): string[] {
+    if (!Array.isArray(labels) || labels.length === 0) return []
+
+    const result: string[] = []
+    const seen = new Set<string>()
+    for (const raw of labels) {
+      const tag = String(raw ?? '').trim()
+      if (!tag) continue
+      if (seen.has(tag)) continue
+      seen.add(tag)
+      result.push(tag)
+    }
+    return result
+  }
+
+  private normalizeDirPath(path: string): string {
+    const normalized = String(path ?? '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+
+    if (!normalized) return ''
+    if (normalized === '/') return '/'
+    return normalized.replace(/\/+$/, '')
+  }
+
+  private splitNormalizedDirSegments(normalizedPath: string): string[] {
+    if (!normalizedPath || normalizedPath === '/') return []
+
+    const parts = normalizedPath.replace(/^\/+/, '').split('/').filter(Boolean)
+    if (parts.length === 0) return []
+
+    const stack: string[] = []
+    for (const part of parts) {
+      if (part === '.') continue
+      if (part === '..') {
+        if (stack.length > 0) stack.pop()
+        continue
+      }
+      stack.push(part)
+    }
+    return stack
+  }
+
+  private isSegmentsPrefix(pathSegments: string[], baseSegments: string[], caseInsensitive: boolean): boolean {
+    if (baseSegments.length === 0) return true
+    if (pathSegments.length < baseSegments.length) return false
+
+    for (let i = 0; i < baseSegments.length; i++) {
+      const a = pathSegments[i] ?? ''
+      const b = baseSegments[i] ?? ''
+      if (caseInsensitive) {
+        if (a.toLowerCase() !== b.toLowerCase()) return false
+      } else {
+        if (a !== b) return false
+      }
+    }
+
+    return true
+  }
+
+  private enqueueTagsMutation(task: () => Promise<void>): Promise<void> {
+    const run = this.tagsMutationChain.then(task, task)
+    this.tagsMutationChain = run.then(() => {}, () => {})
+    return run
+  }
+
+  private getFolderKey(downloadDir: string): string {
+    const dirNormalized = this.normalizeDirPath(downloadDir)
+    if (!dirNormalized) return ''
+
+    const dirSegments = this.splitNormalizedDirSegments(dirNormalized)
+    const baseNormalized = this.defaultDownloadDirNormalized
+    const baseSegments = this.defaultDownloadDirSegments
+
+    if (baseNormalized) {
+      if (this.isSegmentsPrefix(dirSegments, baseSegments, false)) {
+        return dirSegments.slice(baseSegments.length).join('/')
+      }
+
+      if (this.isSegmentsPrefix(dirSegments, baseSegments, true)) {
+        if (!this.warnedDirCaseMismatch) {
+          this.warnedDirCaseMismatch = true
+          console.warn('[TransAdapter] download_dir differs by case from download-dir. Using case-insensitive path mapping.')
+        }
+        return dirSegments.slice(baseSegments.length).join('/')
+      }
+
+      // 若 torrent 被移动到默认目录之外，为避免与默认目录内的相对路径冲突，统一挂在“外部”分支下
+      const external = dirSegments.join('/')
+      return external ? `${VIRTUAL_ROOT_EXTERNAL_PREFIX}${external}` : VIRTUAL_ROOT_EXTERNAL
+    }
+
+    return dirSegments.join('/')
+  }
+
   private pick<T>(obj: Record<string, unknown> | undefined, ...keys: string[]): T | undefined {
     if (!obj) return undefined
     for (const key of keys) {
@@ -240,6 +350,51 @@ export class TransAdapter implements BaseAdapter {
       if (value !== undefined) return value as T
     }
     return undefined
+  }
+
+  private updateSessionInfo(session: Record<string, unknown> | undefined): void {
+    if (!session) return
+
+    const units = this.pick<Record<string, unknown>>(session, 'units')
+    if (units && typeof units === 'object') {
+      const speedBytes = this.pick<number>(units as any, 'speed_bytes', 'speed-bytes', 'speedBytes')
+      if (typeof speedBytes === 'number' && Number.isFinite(speedBytes) && speedBytes > 0) {
+        this.speedBytes = speedBytes
+      }
+    }
+
+    const downloadDir = this.pick<string>(session, 'download_dir', 'download-dir', 'downloadDir')
+    if (typeof downloadDir === 'string' && downloadDir.trim()) {
+      this.defaultDownloadDir = downloadDir.trim()
+      this.defaultDownloadDirNormalized = this.normalizeDirPath(this.defaultDownloadDir)
+      this.defaultDownloadDirSegments = this.splitNormalizedDirSegments(this.defaultDownloadDirNormalized)
+    }
+  }
+
+  private isInvalidArgumentError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    return /invalid argument/i.test(message)
+  }
+
+  private async ensureSpeedBytes(): Promise<void> {
+    if (this.speedBytesState === 'ready') return
+    if (this.speedBytesPromise) return this.speedBytesPromise
+
+    this.speedBytesState = 'loading'
+    this.speedBytesPromise = (async () => {
+      try {
+        const session = await this.rpcCall<Record<string, unknown>>('session-get')
+        this.updateSessionInfo(session)
+        this.speedBytesState = 'ready'
+      } catch (error) {
+        this.speedBytesState = 'unknown'
+        throw error
+      } finally {
+        this.speedBytesPromise = null
+      }
+    })()
+
+    return this.speedBytesPromise
   }
 
   private getSwarmCounts(trackerStats?: TRTrackerStat[]): { seeds: number; leechers: number } | undefined {
@@ -318,6 +473,9 @@ export class TransAdapter implements BaseAdapter {
 
     const trackerStats = this.pick<TRTrackerStat[]>(raw as any, 'tracker_stats', 'trackerStats')
     const swarm = this.getSwarmCounts(trackerStats)
+    const savePath = this.pick<string>(raw as any, 'download_dir', 'downloadDir') ?? ''
+    const category = this.getFolderKey(savePath)
+    const tags = this.normalizeLabels(raw.labels)
 
     return {
       id: hash,
@@ -333,9 +491,9 @@ export class TransAdapter implements BaseAdapter {
       })(),
       ratio: this.pick<number>(raw as any, 'upload_ratio', 'uploadRatio') ?? 0,
       addedTime: this.pick<number>(raw as any, 'added_date', 'addedDate') ?? 0,
-      savePath: this.pick<string>(raw as any, 'download_dir', 'downloadDir') ?? '',
-      category: raw.labels?.[0] || '',
-      tags: raw.labels || [],
+      savePath,
+      category,
+      tags,
       totalSeeds: swarm?.seeds,
       totalPeers: swarm?.leechers,
       numSeeds: swarm?.seeds,
@@ -376,6 +534,8 @@ export class TransAdapter implements BaseAdapter {
 
   async getTransferSettings(): Promise<TransferSettings> {
     const args = await this.rpcCall<Record<string, unknown>>('session-get')
+    this.updateSessionInfo(args)
+    this.speedBytesState = 'ready'
 
     const dlEnabled = Boolean(this.pick<boolean>(args, 'speed_limit_down_enabled', 'speed-limit-down-enabled'))
     const ulEnabled = Boolean(this.pick<boolean>(args, 'speed_limit_up_enabled', 'speed-limit-up-enabled'))
@@ -387,15 +547,20 @@ export class TransAdapter implements BaseAdapter {
     const altUlKbps = this.pick<number>(args, 'alt_speed_up', 'alt-speed-up') ?? 0
 
     return {
-      downloadLimit: dlEnabled ? Math.max(0, dlKbps) * 1024 : 0,
-      uploadLimit: ulEnabled ? Math.max(0, ulKbps) * 1024 : 0,
+      downloadLimit: dlEnabled ? Math.max(0, dlKbps) * this.speedBytes : 0,
+      uploadLimit: ulEnabled ? Math.max(0, ulKbps) * this.speedBytes : 0,
       altEnabled,
-      altDownloadLimit: Math.max(0, altDlKbps) * 1024,
-      altUploadLimit: Math.max(0, altUlKbps) * 1024,
+      altDownloadLimit: Math.max(0, altDlKbps) * this.speedBytes,
+      altUploadLimit: Math.max(0, altUlKbps) * this.speedBytes,
+      speedBytes: this.speedBytes,
     }
   }
 
   async setTransferSettings(patch: Partial<TransferSettings>): Promise<void> {
+    await this.ensureSpeedBytes().catch(error => {
+      console.warn('[TransAdapter] Failed to load speed units:', error)
+    })
+
     const args: Record<string, unknown> = {}
     const downEnabledKey = this.protocolVersion === 'json-rpc2' ? 'speed_limit_down_enabled' : 'speed-limit-down-enabled'
     const downKey = this.protocolVersion === 'json-rpc2' ? 'speed_limit_down' : 'speed-limit-down'
@@ -406,12 +571,12 @@ export class TransAdapter implements BaseAdapter {
     const altUpKey = this.protocolVersion === 'json-rpc2' ? 'alt_speed_up' : 'alt-speed-up'
 
     if (typeof patch.downloadLimit === 'number') {
-      const kbps = Math.max(0, Math.round(patch.downloadLimit / 1024))
+      const kbps = Math.max(0, Math.round(patch.downloadLimit / this.speedBytes))
       args[downEnabledKey] = kbps > 0
       args[downKey] = kbps
     }
     if (typeof patch.uploadLimit === 'number') {
-      const kbps = Math.max(0, Math.round(patch.uploadLimit / 1024))
+      const kbps = Math.max(0, Math.round(patch.uploadLimit / this.speedBytes))
       args[upEnabledKey] = kbps > 0
       args[upKey] = kbps
     }
@@ -419,10 +584,10 @@ export class TransAdapter implements BaseAdapter {
       args[altEnabledKey] = patch.altEnabled
     }
     if (typeof patch.altDownloadLimit === 'number') {
-      args[altDownKey] = Math.max(0, Math.round(patch.altDownloadLimit / 1024))
+      args[altDownKey] = Math.max(0, Math.round(patch.altDownloadLimit / this.speedBytes))
     }
     if (typeof patch.altUploadLimit === 'number') {
-      args[altUpKey] = Math.max(0, Math.round(patch.altUploadLimit / 1024))
+      args[altUpKey] = Math.max(0, Math.round(patch.altUploadLimit / this.speedBytes))
     }
 
     if (Object.keys(args).length === 0) return
@@ -432,6 +597,8 @@ export class TransAdapter implements BaseAdapter {
 
   async getPreferences(): Promise<BackendPreferences> {
     const session = await this.rpcCall<Record<string, unknown>>('session-get')
+    this.updateSessionInfo(session)
+    this.speedBytesState = 'ready'
 
     return {
       // 连接
@@ -613,6 +780,12 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async fetchList(): Promise<FetchListResult> {
+    // speedBytes/defaultDownloadDir：稳定配置，优先在首次列表加载前拿到，避免 UI 首屏出现“目录树抖动”
+    if (!this.speedBytesEagerLoaded) this.speedBytesEagerLoaded = true
+    await this.ensureSpeedBytes().catch(error => {
+      console.warn('[TransAdapter] Failed to load session info:', error)
+    })
+
     const call = async () => this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       fields: this.protocolVersion === 'json-rpc2'
         ? [
@@ -640,6 +813,7 @@ export class TransAdapter implements BaseAdapter {
       data = await call()
     } catch (error) {
       if (!this.supportsLabels) throw error
+      if (!this.isInvalidArgumentError(error)) throw error
       this.supportsLabels = false
       try {
         data = await call()
@@ -658,10 +832,30 @@ export class TransAdapter implements BaseAdapter {
 
     this.currentMap = map
 
+    // Transmission：用 downloadDir 聚合“目录树”筛选项；labels 仅作为 tags。
+    const categoryNames = new Set<string>()
+    let hasRoot = false
+    const tagSet = new Set<string>()
+    for (const torrent of this.currentMap.values()) {
+      const category = (torrent.category ?? '').trim()
+      if (category === '') hasRoot = true
+      else categoryNames.add(category)
+      for (const tag of torrent.tags || []) {
+        const normalized = tag.trim()
+        if (normalized) tagSet.add(normalized)
+      }
+    }
+
+    const categories = new Map<string, Category>()
+    if (hasRoot) categories.set('', { name: '', savePath: this.defaultDownloadDir ?? '' })
+    for (const name of Array.from(categoryNames).sort((a, b) => a.localeCompare(b))) {
+      categories.set(name, { name, savePath: '' })
+    }
+
     return {
       torrents: this.currentMap,
-      categories: new Map(),
-      tags: [],
+      categories,
+      tags: Array.from(tagSet).sort((a, b) => a.localeCompare(b)),
       serverState: undefined,
     }
   }
@@ -693,23 +887,41 @@ export class TransAdapter implements BaseAdapter {
       rpcParams[downloadDirKey] = params.savepath
     }
 
-    const labels = (params.tags || []).map(t => t.trim()).filter(Boolean)
-    const category = params.category?.trim()
-    if (category) {
-      const filtered = labels.filter(t => t !== category)
-      labels.length = 0
-      labels.push(category, ...filtered)
+    if (params.category?.trim()) {
+      console.warn('[TransAdapter] category is ignored for Transmission; use savepath/download dir + labels(tags).')
     }
-    if (this.supportsLabels && labels.length > 0) {
-      rpcParams['labels'] = labels
+
+    const labels = (params.tags || []).map(t => t.trim()).filter(Boolean)
+    let includeLabels = this.supportsLabels && labels.length > 0
+
+    const addOne = async (body: Record<string, unknown>) => {
+      try {
+        await this.rpcCall('torrent-add', body)
+      } catch (error) {
+        if (!includeLabels) throw error
+        if (!this.isInvalidArgumentError(error)) throw error
+        this.supportsLabels = false
+        includeLabels = false
+        try {
+          const retryBody = { ...body }
+          delete (retryBody as any).labels
+          await this.rpcCall('torrent-add', retryBody)
+        } catch {
+          // 保守：若禁用 labels 后仍失败，恢复 supportsLabels，抛出原错误
+          this.supportsLabels = true
+          includeLabels = true
+          throw error
+        }
+      }
     }
 
     // 处理 URL（magnet 和 HTTP URL 都用 filename 参数）
     if (params.urls?.trim()) {
       const urls = params.urls.trim().split('\n').filter((u: string) => u)
       for (const url of urls) {
-        await this.rpcCall('torrent-add', {
+        await addOne({
           ...rpcParams,
+          ...(includeLabels ? { labels } : {}),
           filename: url,
         })
       }
@@ -719,10 +931,11 @@ export class TransAdapter implements BaseAdapter {
     if (params.files?.length) {
       for (const file of params.files) {
         const arrayBuffer = await file.arrayBuffer()
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)))
+        const base64 = uint8ToBase64(new Uint8Array(arrayBuffer))
 
-        await this.rpcCall('torrent-add', {
+        await addOne({
           ...rpcParams,
+          ...(includeLabels ? { labels } : {}),
           metainfo: base64,
         })
       }
@@ -734,7 +947,9 @@ export class TransAdapter implements BaseAdapter {
     transClient.defaults.auth = { username, password }
 
     // 验证凭证有效性
-    await this.rpcCall('session-get')
+    const session = await this.rpcCall<Record<string, unknown>>('session-get')
+    this.updateSessionInfo(session)
+    this.speedBytesState = 'ready'
   }
 
   // 登出
@@ -746,7 +961,9 @@ export class TransAdapter implements BaseAdapter {
   async checkSession(): Promise<boolean> {
     if (!transClient.defaults.auth) return false
     try {
-      await this.rpcCall('session-get')
+      const session = await this.rpcCall<Record<string, unknown>>('session-get')
+      this.updateSessionInfo(session)
+      this.speedBytesState = 'ready'
       return true
     } catch {
       return false
@@ -755,6 +972,10 @@ export class TransAdapter implements BaseAdapter {
 
   // 获取种子详情
   async fetchDetail(hash: string): Promise<UnifiedTorrentDetail> {
+    await this.ensureSpeedBytes().catch(error => {
+      console.warn('[TransAdapter] Failed to load speed units:', error)
+    })
+
     const call = async () => this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       ids: [hash],
       fields: this.protocolVersion === 'json-rpc2'
@@ -805,6 +1026,7 @@ export class TransAdapter implements BaseAdapter {
       data = await call()
     } catch (error) {
       if (!this.supportsLabels) throw error
+      if (!this.isInvalidArgumentError(error)) throw error
       this.supportsLabels = false
       try {
         data = await call()
@@ -851,8 +1073,20 @@ export class TransAdapter implements BaseAdapter {
       }
     })
 
-    const trackers: Tracker[] = (torrent.trackers || []).map((t, i) => {
-      const stat = trackerStats[i]
+    const trackerStatsByKey = new Map<string, TRTrackerStat>()
+    const trackerStatsByAnnounce = new Map<string, TRTrackerStat>()
+    for (const stat of trackerStats) {
+      if (!stat || typeof stat !== 'object') continue
+      const announce = (stat as any).announce
+      const tier = (stat as any).tier
+      if (typeof announce !== 'string' || !announce) continue
+      trackerStatsByAnnounce.set(announce, stat)
+      trackerStatsByKey.set(`${announce}\n${String(tier ?? '')}`, stat)
+    }
+
+    const trackers: Tracker[] = (torrent.trackers || []).map((t) => {
+      const key = `${t.announce}\n${String((t as any).tier ?? '')}`
+      const stat = trackerStatsByKey.get(key) ?? trackerStatsByAnnounce.get(t.announce)
       return this.mapTracker(t, stat)
     })
 
@@ -863,8 +1097,8 @@ export class TransAdapter implements BaseAdapter {
       progress: p.progress || 0,
       dlSpeed: this.pick<number>(p as any, 'rate_to_client', 'rateToClient') || 0,
       upSpeed: this.pick<number>(p as any, 'rate_to_peer', 'rateToPeer') || 0,
-      downloaded: 0,
-      uploaded: 0,
+      downloaded: this.pick<number>(p as any, 'bytes_to_client', 'bytesToClient') ?? 0,
+      uploaded: this.pick<number>(p as any, 'bytes_to_peer', 'bytesToPeer') ?? 0,
     }))
 
     const dlLimited = this.pick<boolean>(torrent as any, 'download_limited', 'downloadLimited') ?? false
@@ -876,6 +1110,9 @@ export class TransAdapter implements BaseAdapter {
     // 注意：peers 列表可能被 daemon 截断（不是完整连接），因此这两个值更偏“可见连接”而非精确值。
     const connectedSeeds = peers.filter(p => p.progress >= 1).length
     const connectedLeechers = peers.filter(p => p.progress >= 0 && p.progress < 1).length
+    const savePath = this.pick<string>(torrent as any, 'download_dir', 'downloadDir') ?? ''
+    const category = this.getFolderKey(savePath)
+    const tags = this.normalizeLabels(torrent.labels)
 
     return {
       hash: this.pick<string>(torrent as any, 'hash_string', 'hashString') || hash,
@@ -883,14 +1120,14 @@ export class TransAdapter implements BaseAdapter {
       size: this.pick<number>(torrent as any, 'total_size', 'totalSize') ?? 0,
       completed: this.pick<number>(torrent as any, 'downloaded_ever', 'downloadedEver') ?? 0,
       uploaded: this.pick<number>(torrent as any, 'uploaded_ever', 'uploadedEver') ?? 0,
-      dlLimit: dlLimited ? dlLimitKb * 1024 : -1,
-      upLimit: upLimited ? upLimitKb * 1024 : -1,
+      dlLimit: dlLimited ? dlLimitKb * this.speedBytes : -1,
+      upLimit: upLimited ? upLimitKb * this.speedBytes : -1,
       seedingTime: this.pick<number>(torrent as any, 'seconds_seeding', 'secondsSeeding') ?? 0,
       addedTime: this.pick<number>(torrent as any, 'added_date', 'addedDate') ?? 0,
       completionOn: this.pick<number>(torrent as any, 'done_date', 'doneDate') ?? 0,
-      savePath: this.pick<string>(torrent as any, 'download_dir', 'downloadDir') ?? '',
-      category: torrent.labels?.[0] || '',
-      tags: torrent.labels || [],
+      savePath,
+      category,
+      tags,
       connections: this.pick<number>(torrent as any, 'peers_connected', 'peersConnected') || 0,
       numSeeds: connectedSeeds,
       numLeechers: connectedLeechers,
@@ -933,8 +1170,12 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async setDownloadLimitBatch(hashes: string[], limit: number): Promise<void> {
+    await this.ensureSpeedBytes().catch(error => {
+      console.warn('[TransAdapter] Failed to load speed units:', error)
+    })
+
     const limited = limit > 0
-    const kbLimit = limited ? Math.max(1, Math.round(limit / 1024)) : 0
+    const kbLimit = limited ? Math.max(1, Math.round(limit / this.speedBytes)) : 0
     const limitedKey = this.protocolVersion === 'json-rpc2' ? 'download_limited' : 'downloadLimited'
     const limitKey = this.protocolVersion === 'json-rpc2' ? 'download_limit' : 'downloadLimit'
     await this.rpcCall('torrent-set', {
@@ -949,8 +1190,12 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async setUploadLimitBatch(hashes: string[], limit: number): Promise<void> {
+    await this.ensureSpeedBytes().catch(error => {
+      console.warn('[TransAdapter] Failed to load speed units:', error)
+    })
+
     const limited = limit > 0
-    const kbLimit = limited ? Math.max(1, Math.round(limit / 1024)) : 0
+    const kbLimit = limited ? Math.max(1, Math.round(limit / this.speedBytes)) : 0
     const limitedKey = this.protocolVersion === 'json-rpc2' ? 'upload_limited' : 'uploadLimited'
     const limitKey = this.protocolVersion === 'json-rpc2' ? 'upload_limit' : 'uploadLimit'
     await this.rpcCall('torrent-set', {
@@ -973,30 +1218,9 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async setCategoryBatch(hashes: string[], category: string): Promise<void> {
-    if (!this.supportsLabels) {
-      console.warn('[TransAdapter] Category/labels not supported on this Transmission version')
-      return
-    }
-    const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
-      ...this.buildIds(hashes),
-      fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
-    })
-
-    // 批量更新：保留其他 labels，只替换第一个
-    for (const torrent of data.torrents || []) {
-      const torrentHash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
-      if (!torrentHash) continue
-
-      const existingLabels = torrent.labels || []
-      const newLabels = category
-        ? [category, ...existingLabels.slice(1)]
-        : existingLabels.slice(1)
-
-      await this.rpcCall('torrent-set', {
-        ids: [torrentHash],
-        labels: newLabels,
-      })
-    }
+    void hashes
+    void category
+    console.warn('[TransAdapter] Transmission does not support categories. Use setLocation/downloadDir + labels(tags).')
   }
 
   async setTags(hash: string, tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
@@ -1004,40 +1228,87 @@ export class TransAdapter implements BaseAdapter {
   }
 
   async setTagsBatch(hashes: string[], tags: string[], mode: 'set' | 'add' | 'remove'): Promise<void> {
-    if (!this.supportsLabels) {
-      console.warn('[TransAdapter] Tags/labels not supported on this Transmission version')
-      return
-    }
-    const sanitized = tags.map(t => t.trim()).filter(Boolean)
+    return this.enqueueTagsMutation(async () => {
+      if (hashes.length === 0) return
+      if (!this.supportsLabels) {
+        console.warn('[TransAdapter] Tags/labels not supported on this Transmission version')
+        return
+      }
 
-    if (mode === 'set') {
-      await this.rpcCall('torrent-set', { ...this.buildIds(hashes), labels: sanitized })
-      return
-    }
+      const sanitized = Array.from(new Set(tags.map(t => t.trim()).filter(Boolean)))
 
-    // add/remove 模式需要先获取当前 labels
-    const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
-      ...this.buildIds(hashes),
-      fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
+      if (mode === 'set') {
+        try {
+          await this.rpcCall('torrent-set', {
+            ...this.buildIds(hashes),
+            labels: sanitized,
+          })
+        } catch (error) {
+          if (!this.isInvalidArgumentError(error)) throw error
+          this.supportsLabels = false
+          console.warn('[TransAdapter] Tags/labels not supported on this Transmission version')
+        }
+        return
+      }
+
+      if (sanitized.length === 0) return
+
+      let data: { torrents: TRTorrent[] }
+      try {
+        data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
+          ...this.buildIds(hashes),
+          fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
+        })
+      } catch (error) {
+        if (!this.isInvalidArgumentError(error)) throw error
+        this.supportsLabels = false
+        console.warn('[TransAdapter] Tags/labels not supported on this Transmission version')
+        return
+      }
+
+      const target = new Set(sanitized)
+      const groups = new Map<string, { ids: string[]; labels: string[] }>()
+
+      for (const torrent of data.torrents || []) {
+        const torrentHash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
+        if (!torrentHash) continue
+
+        const existingTags = this.normalizeLabels(torrent.labels)
+
+        const nextTags = (() => {
+          if (mode === 'add') {
+            const merged: string[] = [...existingTags]
+            const existing = new Set(existingTags)
+            for (const t of sanitized) {
+              if (existing.has(t)) continue
+              existing.add(t)
+              merged.push(t)
+            }
+            return merged
+          }
+          // remove
+          return existingTags.filter(t => !target.has(t))
+        })()
+
+        const isSame = existingTags.length === nextTags.length && existingTags.every((t, i) => t === nextTags[i])
+        if (isSame) continue
+
+        const key = JSON.stringify(nextTags)
+        const group = groups.get(key)
+        if (group) {
+          group.ids.push(torrentHash)
+        } else {
+          groups.set(key, { ids: [torrentHash], labels: nextTags })
+        }
+      }
+
+      for (const group of groups.values()) {
+        await this.rpcCall('torrent-set', {
+          ids: group.ids,
+          labels: group.labels,
+        })
+      }
     })
-
-    const target = new Set(sanitized)
-
-    for (const torrent of data.torrents || []) {
-      const torrentHash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
-      if (!torrentHash) continue
-
-      const current = new Set(torrent.labels || [])
-
-      const newLabels = mode === 'add'
-        ? Array.from(new Set([...current, ...target]))
-        : Array.from(current).filter(t => !target.has(t))
-
-      await this.rpcCall('torrent-set', {
-        ids: [torrentHash],
-        labels: newLabels,
-      })
-    }
   }
 
   async setFilePriority(
@@ -1094,19 +1365,24 @@ export class TransAdapter implements BaseAdapter {
   // ========== 标签管理 ==========
 
   async getTags(): Promise<string[]> {
+    if (!this.supportsLabels) {
+      console.warn('[TransAdapter] Tags/labels not supported on this Transmission version')
+      return []
+    }
     // 从所有种子中聚合 labels
     const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
-      fields: ['labels']
+      fields: ['labels'],
     })
 
     const labels = new Set<string>()
     for (const torrent of data.torrents || []) {
-      for (const label of torrent.labels || []) {
+      const tags = this.normalizeLabels(torrent.labels)
+      for (const label of tags) {
         labels.add(label)
       }
     }
 
-    return Array.from(labels)
+    return Array.from(labels).sort((a, b) => a.localeCompare(b))
   }
 
   async createTags(..._tags: string[]): Promise<void> {
@@ -1116,4 +1392,31 @@ export class TransAdapter implements BaseAdapter {
   async deleteTags(..._tags: string[]): Promise<void> {
     throw new Error('Transmission 不支持删除标签（labels 仅通过 setTags 移除）')
   }
+}
+
+/**
+ * 安全地将 Uint8Array 转换为 Base64 字符串（binary）
+ *
+ * 避免 `String.fromCharCode(...u8)` 在大文件下触发引擎参数上限导致 RangeError。
+ */
+function uint8ToBase64(u8Arr: Uint8Array): string {
+  const CHUNK_SIZE = 0x8000 // 32768: conservative, below typical engine arg limits
+  const chunks: string[] = []
+
+  for (let i = 0; i < u8Arr.length; i += CHUNK_SIZE) {
+    const slice = u8Arr.subarray(i, Math.min(i + CHUNK_SIZE, u8Arr.length))
+    chunks.push(String.fromCharCode.apply(null, slice as unknown as number[]))
+  }
+
+  const binary = chunks.join('')
+
+  const btoaFn = (globalThis as any).btoa as ((data: string) => string) | undefined
+  if (typeof btoaFn === 'function') return btoaFn(binary)
+
+  const BufferCtor = (globalThis as any).Buffer as
+    | { from: (data: string, encoding: string) => { toString: (encoding: string) => string } }
+    | undefined
+  if (BufferCtor?.from) return BufferCtor.from(binary, 'binary').toString('base64')
+
+  throw new Error('Base64 encoder is not available in current runtime')
 }
