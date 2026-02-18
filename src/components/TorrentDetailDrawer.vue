@@ -39,6 +39,28 @@ const showLimitDialog = ref(false)
 const dlLimitInput = ref('')
 const upLimitInput = ref('')
 
+const speedBytes = ref(1024)
+const speedUnitLabel = computed(() => (speedBytes.value === 1000 ? 'kB/s' : 'KiB/s'))
+
+async function ensureSpeedBytes() {
+  if (!backendStore.adapter) return
+  if (!backendStore.isTrans) {
+    speedBytes.value = 1024
+    return
+  }
+
+  try {
+    const settings = await backendStore.adapter.getTransferSettings()
+    const sb = settings.speedBytes
+    if (typeof sb === 'number' && Number.isFinite(sb) && sb > 0) {
+      speedBytes.value = sb
+    }
+  } catch (err) {
+    console.warn('[TorrentDetailDrawer] Failed to load speedBytes, fallback 1024:', err)
+    speedBytes.value = 1024
+  }
+}
+
 // 获取详情
 async function fetchDetail() {
   if (!props.hash || !backendStore.adapter) return
@@ -47,6 +69,7 @@ async function fetchDetail() {
   error.value = ''
   try {
     detail.value = await backendStore.adapter.fetchDetail(props.hash)
+    await ensureSpeedBytes()
   } catch (err) {
     console.error('[TorrentDetailDrawer] Failed to fetch detail:', err)
     error.value = err instanceof Error ? err.message : '获取详情失败'
@@ -166,10 +189,6 @@ async function handleRecheck() {
 
 // 重新汇报
 async function handleReannounce() {
-  if (!backendStore.isQbit) {
-    alert('Transmission 不支持此操作')
-    return
-  }
   await executeAction(() => backendStore.adapter!.reannounce(props.hash!))
 }
 
@@ -182,19 +201,33 @@ async function handleForceStart() {
 function openLimitDialog() {
   if (!detail.value) return
   // 预填充当前限速值（-1 表示无限制）
-  dlLimitInput.value = detail.value.dlLimit < 0 ? '' : (detail.value.dlLimit / 1024).toString()
-  upLimitInput.value = detail.value.upLimit < 0 ? '' : (detail.value.upLimit / 1024).toString()
+  const divisor = speedBytes.value > 0 ? speedBytes.value : 1024
+  dlLimitInput.value = detail.value.dlLimit < 0 ? '' : (detail.value.dlLimit / divisor).toString()
+  upLimitInput.value = detail.value.upLimit < 0 ? '' : (detail.value.upLimit / divisor).toString()
   showLimitDialog.value = true
   showMoreMenu.value = false
 }
 
 // 保存限速设置
-async function saveLimits() {
-  const dlLimit = dlLimitInput.value.trim() === '' ? -1 : parseFloat(dlLimitInput.value) * 1024
-  const upLimit = upLimitInput.value.trim() === '' ? -1 : parseFloat(upLimitInput.value) * 1024
+function parseKbLimit(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) return -1
+  const num = Number(trimmed)
+  if (!Number.isFinite(num) || num < 0) throw new Error(`限速请输入非负数字（${speedUnitLabel.value}）`)
+  if (num <= 0) return -1
+  const multiplier = speedBytes.value > 0 ? speedBytes.value : 1024
+  return Math.round(num * multiplier)
+}
 
-  if (dlLimit < -1 || upLimit < -1) {
-    alert('限速值无效')
+async function saveLimits() {
+  let dlLimit: number
+  let upLimit: number
+
+  try {
+    dlLimit = parseKbLimit(dlLimitInput.value)
+    upLimit = parseKbLimit(upLimitInput.value)
+  } catch (err) {
+    alert(err instanceof Error ? err.message : '限速值无效')
     return
   }
 
@@ -560,11 +593,10 @@ function handleClickOutside() {
                   </button>
                   <button
                     @click="handleReannounce"
-                    :class="`w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 flex items-center gap-3 ${!backendStore.isQbit ? 'opacity-50 cursor-not-allowed' : ''}`"
+                    class="w-full px-4 py-2.5 text-left text-sm hover:bg-gray-50 flex items-center gap-3"
                   >
                     <Icon name="radio" :size="16" class="text-gray-500" />
                     <span>重新汇报</span>
-                    <span v-if="!backendStore.isQbit" class="ml-auto text-xs text-gray-400">TR不支持</span>
                   </button>
                   <button
                     @click="handleForceStart"
@@ -629,7 +661,7 @@ function handleClickOutside() {
                     </div>
                     <div class="p-6 space-y-4">
                       <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">下载限速 (KB/s)</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">下载限速 ({{ speedUnitLabel }})</label>
                         <input
                           v-model="dlLimitInput"
                           type="number"
@@ -640,7 +672,7 @@ function handleClickOutside() {
                         />
                       </div>
                       <div>
-                        <label class="block text-sm font-medium text-gray-700 mb-1">上传限速 (KB/s)</label>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">上传限速 ({{ speedUnitLabel }})</label>
                         <input
                           v-model="upLimitInput"
                           type="number"
@@ -651,7 +683,7 @@ function handleClickOutside() {
                         />
                       </div>
                       <p class="text-xs text-gray-500">
-                        留空表示无限制，输入 0 表示暂停
+                        留空或 0 表示无限制
                       </p>
                     </div>
                     <div class="px-6 py-4 bg-gray-50 flex justify-end gap-3">

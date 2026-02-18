@@ -32,6 +32,10 @@ async function loadTags() {
 
 // 创建标签
 async function handleCreate() {
+  if (backendStore.isTrans) {
+    alert('Transmission 不支持预创建标签（labels 会随种子自动出现）。请在种子列表右键“设置标签”。')
+    return
+  }
   if (!input.value.trim()) return
 
   const newTags = input.value.split(',').map(t => t.trim()).filter(Boolean)
@@ -48,7 +52,10 @@ async function handleCreate() {
 
 // 删除标签
 async function handleDelete(tag: string) {
-  if (!confirm(`确定要删除标签 "${tag}" 吗？`)) return
+  const message = backendStore.isTrans
+    ? `确定要从所有种子移除标签 "${tag}" 吗？`
+    : `确定要删除标签 "${tag}" 吗？`
+  if (!confirm(message)) return
 
   try {
     await adapter.deleteTags(tag)
@@ -80,8 +87,8 @@ onMounted(() => {
 
       <!-- 内容区 -->
       <div class="flex-1 overflow-auto p-4 sm:p-6">
-        <!-- 创建表单 -->
-        <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+        <!-- 创建表单（qB 专属） -->
+        <div v-if="backendStore.isQbit" class="mb-6 p-4 bg-gray-50 rounded-lg">
           <h3 class="text-sm font-medium mb-3">创建标签</h3>
           <div class="flex flex-col sm:flex-row gap-3">
             <input
@@ -99,6 +106,12 @@ onMounted(() => {
               创建
             </button>
           </div>
+        </div>
+
+        <!-- 提示（Transmission labels） -->
+        <div v-else-if="backendStore.isTrans" class="mb-6 p-4 bg-amber-50 text-amber-800 rounded-lg text-sm">
+          <div class="font-medium mb-1">Transmission 标签说明</div>
+          <div>Transmission 不支持“全局预创建标签”，labels 会随种子自动出现；这里的“删除”会从所有种子移除该标签。</div>
         </div>
 
         <!-- 标签列表 -->

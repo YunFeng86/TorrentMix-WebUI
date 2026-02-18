@@ -7,6 +7,7 @@ interface Props {
   x: number
   y: number
   hashes: string[]
+  canSetCategory?: boolean
 }
 
 const props = defineProps<Props>()
@@ -59,6 +60,7 @@ const menuPosition = computed(() => {
  */
 const menuItems = computed<MenuItem[]>(() => {
   const isMulti = props.hashes.length > 1
+  const canSetCategory = props.canSetCategory !== false
 
   return [
     {
@@ -103,6 +105,7 @@ const menuItems = computed<MenuItem[]>(() => {
       id: 'set-category',
       label: '设置分类',
       icon: 'folder',
+      disabled: !canSetCategory,
       action: () => emit('action', 'set-category', props.hashes)
     },
     {

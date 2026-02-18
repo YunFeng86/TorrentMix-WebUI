@@ -549,6 +549,83 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       await tryCall('/api/v2/torrents/addTags', toAdd)
     } else {
       // 批量 set 模式：直接替换所有标签
+      if (safeTags.length === 0) {
+        // qB 的 setTags 若 tags 为空可能不会清空；这里用 removeTags 清空标签。
+        const removeInChunks = async (payloadTags: string[]) => {
+          const CHUNK_SIZE = 100
+          for (let i = 0; i < payloadTags.length; i += CHUNK_SIZE) {
+            await tryCall('/api/v2/torrents/removeTags', payloadTags.slice(i, i + CHUNK_SIZE))
+          }
+        }
+
+        const fetchUnionFromInfo = async (): Promise<Set<string>> => {
+          const { data } = await apiClient.get<QBTorrentInfo[]>('/api/v2/torrents/info', { params: { hashes: hashesParam } })
+
+          const union = new Set<string>()
+          for (const item of data || []) {
+            const raw = String(item?.tags ?? '')
+            if (!raw.trim()) continue
+            for (const t of raw.split(',')) {
+              const normalized = t.trim()
+              if (normalized) union.add(normalized)
+            }
+          }
+          return union
+        }
+
+        let union = new Set<string>()
+        let usedFallback = false
+
+        if (hashes.length === 0) {
+          try {
+            const all = await this.getTags()
+            for (const t of all) {
+              const normalized = t.trim()
+              if (normalized) union.add(normalized)
+            }
+          } catch (error) {
+            usedFallback = true
+            console.warn('[QbitAdapter] Failed to load tags list, fallback to cache:', error)
+            for (const t of this.currentTags) {
+              const normalized = String(t ?? '').trim()
+              if (normalized) union.add(normalized)
+            }
+          }
+        } else {
+          try {
+            union = await fetchUnionFromInfo()
+          } catch (error) {
+            usedFallback = true
+            console.warn('[QbitAdapter] Failed to load torrent tags from backend, fallback to cache:', error)
+            for (const h of hashes) {
+              const current = this.currentMap.get(h)?.tags ?? []
+              for (const t of current) {
+                const normalized = String(t ?? '').trim()
+                if (normalized) union.add(normalized)
+              }
+            }
+          }
+        }
+
+        await removeInChunks(Array.from(union))
+
+        // Silent retry：如果走了缓存兜底，再用后端权威数据补一次，避免 currentMap 脏读导致“清空不彻底”。
+        if (usedFallback) {
+          try {
+            if (hashes.length === 0) {
+              const all = await this.getTags()
+              const remaining = all.map(t => t.trim()).filter(Boolean)
+              await removeInChunks(remaining)
+            } else {
+              const remainingUnion = await fetchUnionFromInfo()
+              await removeInChunks(Array.from(remainingUnion))
+            }
+          } catch {
+            // ignore
+          }
+        }
+        return
+      }
       await tryCall('/api/v2/torrents/setTags', safeTags)
     }
   }

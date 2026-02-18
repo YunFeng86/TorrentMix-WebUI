@@ -1,6 +1,6 @@
 import { transClient } from '@/api/trans-client'
 import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
-import type { Category, Peer, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
+import type { Category, Peer, ServerState, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 import { VIRTUAL_ROOT_EXTERNAL, VIRTUAL_ROOT_EXTERNAL_PREFIX } from '@/utils/folderTree'
 
 /**
@@ -222,6 +222,9 @@ export class TransAdapter implements BaseAdapter {
   private speedBytesPromise: Promise<void> | null = null
   private speedBytesEagerLoaded = false
   private tagsMutationChain: Promise<void> = Promise.resolve()
+  private transferSettingsCache: { value: TransferSettings; updatedAt: number } | null = null
+  private transferSettingsRefreshPromise: Promise<TransferSettings> | null = null
+  private readonly transferSettingsTtlMs = 5000
 
   constructor(versionInfo?: { rpcSemver?: string }) {
     // 根据 rpc-version-semver 判断协议版本和可用字段
@@ -397,6 +400,26 @@ export class TransAdapter implements BaseAdapter {
     return this.speedBytesPromise
   }
 
+  private isTransferSettingsCacheFresh(now: number): boolean {
+    if (!this.transferSettingsCache) return false
+    return now - this.transferSettingsCache.updatedAt <= this.transferSettingsTtlMs
+  }
+
+  private async refreshTransferSettingsCache(): Promise<TransferSettings> {
+    if (this.transferSettingsRefreshPromise) return this.transferSettingsRefreshPromise
+
+    this.transferSettingsRefreshPromise = (async () => {
+      const settings = await this.getTransferSettings()
+      return settings
+    })()
+
+    try {
+      return await this.transferSettingsRefreshPromise
+    } finally {
+      this.transferSettingsRefreshPromise = null
+    }
+  }
+
   private getSwarmCounts(trackerStats?: TRTrackerStat[]): { seeds: number; leechers: number } | undefined {
     if (!trackerStats || trackerStats.length === 0) return undefined
 
@@ -546,7 +569,7 @@ export class TransAdapter implements BaseAdapter {
     const altDlKbps = this.pick<number>(args, 'alt_speed_down', 'alt-speed-down') ?? 0
     const altUlKbps = this.pick<number>(args, 'alt_speed_up', 'alt-speed-up') ?? 0
 
-    return {
+    const settings: TransferSettings = {
       downloadLimit: dlEnabled ? Math.max(0, dlKbps) * this.speedBytes : 0,
       uploadLimit: ulEnabled ? Math.max(0, ulKbps) * this.speedBytes : 0,
       altEnabled,
@@ -554,6 +577,8 @@ export class TransAdapter implements BaseAdapter {
       altUploadLimit: Math.max(0, altUlKbps) * this.speedBytes,
       speedBytes: this.speedBytes,
     }
+    this.transferSettingsCache = { value: settings, updatedAt: Date.now() }
+    return settings
   }
 
   async setTransferSettings(patch: Partial<TransferSettings>): Promise<void> {
@@ -593,6 +618,17 @@ export class TransAdapter implements BaseAdapter {
     if (Object.keys(args).length === 0) return
 
     await this.rpcCall('session-set', args)
+
+    if (this.transferSettingsCache) {
+      const previous = this.transferSettingsCache.value
+      const next: TransferSettings = { ...previous }
+      if (typeof patch.downloadLimit === 'number') next.downloadLimit = patch.downloadLimit
+      if (typeof patch.uploadLimit === 'number') next.uploadLimit = patch.uploadLimit
+      if (typeof patch.altEnabled === 'boolean') next.altEnabled = patch.altEnabled
+      if (typeof patch.altDownloadLimit === 'number') next.altDownloadLimit = patch.altDownloadLimit
+      if (typeof patch.altUploadLimit === 'number') next.altUploadLimit = patch.altUploadLimit
+      this.transferSettingsCache = { value: next, updatedAt: Date.now() }
+    }
   }
 
   async getPreferences(): Promise<BackendPreferences> {
@@ -781,10 +817,25 @@ export class TransAdapter implements BaseAdapter {
 
   async fetchList(): Promise<FetchListResult> {
     // speedBytes/defaultDownloadDir：稳定配置，优先在首次列表加载前拿到，避免 UI 首屏出现“目录树抖动”
-    if (!this.speedBytesEagerLoaded) this.speedBytesEagerLoaded = true
-    await this.ensureSpeedBytes().catch(error => {
-      console.warn('[TransAdapter] Failed to load session info:', error)
-    })
+    const now = Date.now()
+    let transferSettings: TransferSettings | undefined = this.transferSettingsCache?.value
+
+    const shouldInitSession = !this.speedBytesEagerLoaded
+    if (shouldInitSession) this.speedBytesEagerLoaded = true
+
+    const initTransferSettingsPromise = shouldInitSession
+      ? this.refreshTransferSettingsCache().catch(error => {
+          console.warn('[TransAdapter] Failed to load session info:', error)
+          return undefined
+        })
+      : null
+
+    if (!shouldInitSession && (!transferSettings || !this.isTransferSettingsCacheFresh(now))) {
+      // Stale-While-Revalidate：不阻塞列表，后台刷新一次
+      void this.refreshTransferSettingsCache().catch(error => {
+        console.warn('[TransAdapter] Failed to refresh session info:', error)
+      })
+    }
 
     const call = async () => this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       fields: this.protocolVersion === 'json-rpc2'
@@ -808,19 +859,31 @@ export class TransAdapter implements BaseAdapter {
           ],
     })
 
-    let data: { torrents: TRTorrent[] }
-    try {
-      data = await call()
-    } catch (error) {
-      if (!this.supportsLabels) throw error
-      if (!this.isInvalidArgumentError(error)) throw error
-      this.supportsLabels = false
+    const torrentsPromise = (async () => {
+      let data: { torrents: TRTorrent[] }
       try {
         data = await call()
-      } catch {
-        this.supportsLabels = true
-        throw error
+      } catch (error) {
+        if (!this.supportsLabels) throw error
+        if (!this.isInvalidArgumentError(error)) throw error
+        this.supportsLabels = false
+        try {
+          data = await call()
+        } catch {
+          this.supportsLabels = true
+          throw error
+        }
       }
+      return data
+    })()
+
+    let data: { torrents: TRTorrent[] }
+    if (initTransferSettingsPromise) {
+      const [ts, torrentsData] = await Promise.all([initTransferSettingsPromise, torrentsPromise])
+      transferSettings = ts ?? transferSettings
+      data = torrentsData
+    } else {
+      data = await torrentsPromise
     }
 
     const map = new Map<string, UnifiedTorrent>()
@@ -836,7 +899,11 @@ export class TransAdapter implements BaseAdapter {
     const categoryNames = new Set<string>()
     let hasRoot = false
     const tagSet = new Set<string>()
+    let dlInfoSpeed = 0
+    let upInfoSpeed = 0
     for (const torrent of this.currentMap.values()) {
+      dlInfoSpeed += torrent.dlspeed
+      upInfoSpeed += torrent.upspeed
       const category = (torrent.category ?? '').trim()
       if (category === '') hasRoot = true
       else categoryNames.add(category)
@@ -852,11 +919,26 @@ export class TransAdapter implements BaseAdapter {
       categories.set(name, { name, savePath: '' })
     }
 
+    const useAltSpeed = transferSettings?.altEnabled ?? false
+    const serverState: ServerState = {
+      dlInfoSpeed,
+      upInfoSpeed,
+      dlRateLimit: transferSettings ? (useAltSpeed ? transferSettings.altDownloadLimit : transferSettings.downloadLimit) : 0,
+      upRateLimit: transferSettings ? (useAltSpeed ? transferSettings.altUploadLimit : transferSettings.uploadLimit) : 0,
+      connectionStatus: 'connected',
+      peers: 0,
+      freeSpaceOnDisk: 0,
+      useAltSpeed,
+      altDlLimit: transferSettings?.altDownloadLimit ?? 0,
+      altUpLimit: transferSettings?.altUploadLimit ?? 0,
+      backendName: 'Transmission',
+    }
+
     return {
       torrents: this.currentMap,
       categories,
       tags: Array.from(tagSet).sort((a, b) => a.localeCompare(b)),
-      serverState: undefined,
+      serverState,
     }
   }
 
@@ -1400,8 +1482,58 @@ export class TransAdapter implements BaseAdapter {
     throw new Error('Transmission 不支持预创建标签（labels 随种子自动创建）')
   }
 
-  async deleteTags(..._tags: string[]): Promise<void> {
-    throw new Error('Transmission 不支持删除标签（labels 仅通过 setTags 移除）')
+  async deleteTags(...tags: string[]): Promise<void> {
+    return this.enqueueTagsMutation(async () => {
+      if (!this.supportsLabels) {
+        throw new Error('Transmission 当前版本不支持标签（labels）')
+      }
+
+      const sanitized = Array.from(new Set(tags.map(t => t.trim()).filter(Boolean)))
+      if (sanitized.length === 0) return
+
+      let data: { torrents: TRTorrent[] }
+      try {
+        data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
+          fields: this.protocolVersion === 'json-rpc2' ? ['hash_string', 'labels'] : ['hashString', 'labels'],
+        })
+      } catch (error) {
+        if (!this.isInvalidArgumentError(error)) throw error
+        this.supportsLabels = false
+        throw new Error('Transmission 当前版本不支持标签（labels）')
+      }
+
+      const target = new Set(sanitized)
+      const groups = new Map<string, { ids: string[]; labels: string[] }>()
+
+      for (const torrent of data.torrents || []) {
+        const torrentHash = this.pick<string>(torrent as any, 'hash_string', 'hashString')
+        if (!torrentHash) continue
+
+        const existingTags = this.normalizeLabels(torrent.labels)
+        const nextTags = existingTags.filter(t => !target.has(t))
+
+        const isSame = existingTags.length === nextTags.length && existingTags.every((t, i) => t === nextTags[i])
+        if (isSame) continue
+
+        const key = JSON.stringify(nextTags)
+        const group = groups.get(key)
+        if (group) {
+          group.ids.push(torrentHash)
+        } else {
+          groups.set(key, { ids: [torrentHash], labels: nextTags })
+        }
+      }
+
+      if (groups.size === 0) return
+
+      const CHUNK_SIZE = 100
+      for (const group of groups.values()) {
+        for (let i = 0; i < group.ids.length; i += CHUNK_SIZE) {
+          const chunkIds = group.ids.slice(i, i + CHUNK_SIZE)
+          await this.rpcCall('torrent-set', { ids: chunkIds, labels: group.labels })
+        }
+      }
+    })
   }
 }
 

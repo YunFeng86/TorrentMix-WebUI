@@ -500,7 +500,7 @@ const toolbarSelectItems = computed<OverflowActionItem[]>(() => [
 const toolbarManageItems = computed<OverflowActionItem[]>(() => [
   { id: 'columns', title: '列设置', icon: 'columns-3', pinned: false, priority: 10, group: 'manage', groupLabel: '管理' },
   { id: 'categoryManage', title: '分类管理', icon: 'folder', show: backendStore.isQbit, pinned: false, priority: 11, group: 'manage', groupLabel: '管理' },
-  { id: 'tagManage', title: '标签管理', icon: 'tag', show: backendStore.isQbit, pinned: false, priority: 12, group: 'manage', groupLabel: '管理' },
+  { id: 'tagManage', title: '标签管理', icon: 'tag', show: backendStore.isQbit || backendStore.isTrans, pinned: false, priority: 12, group: 'manage', groupLabel: '管理' },
   { id: 'backendSettings', title: '设置', icon: 'settings', pinned: false, priority: 13, group: 'manage', groupLabel: '管理' },
 ])
 
@@ -642,13 +642,67 @@ async function handleContextMenuAction(action: string, hashes: string[]) {
   try {
     switch (action) {
       case 'set-category':
-        // TODO: 打开分类选择对话框
-        alert('设置分类功能开发中')
-        return
+        if (backendStore.isTrans) {
+          alert('Transmission 不支持分类（Category）。请使用“移动位置”或“标签”。')
+          return
+        }
+
+        {
+          const currentValues = hashes.map(h => torrentStore.torrents.get(h)?.category ?? '')
+          const unique = Array.from(new Set(currentValues.map(v => v.trim())))
+          const defaultValue = unique.length === 1 ? unique[0]! : ''
+
+          const cats = Array.from(backendStore.categories.values())
+            .map(c => c.name)
+            .map(s => s.trim())
+            .filter(Boolean)
+          const preview = cats.slice(0, 20)
+          const previewText = preview.length > 0
+            ? `\n\n可用分类（前 ${preview.length} 个）：\n${preview.join('\n')}${cats.length > preview.length ? '\n…' : ''}`
+            : ''
+
+          const input = prompt(`请输入分类名（留空清除分类）。${previewText}`, defaultValue)
+          if (input === null) return
+          await adapter.value.setCategoryBatch(hashes, input.trim())
+          await immediateRefresh()
+          return
+        }
       case 'set-tags':
-        // TODO: 打开标签选择对话框
-        alert('设置标签功能开发中')
-        return
+        {
+          const getCommonTags = (targetHashes: string[]) => {
+            if (targetHashes.length === 0) return []
+            const all = targetHashes.map(h => new Set(torrentStore.torrents.get(h)?.tags ?? []))
+            let common = new Set(all[0] ?? [])
+            for (const s of all.slice(1)) {
+              common = new Set(Array.from(common).filter(t => s.has(t)))
+            }
+            return Array.from(common).sort((a, b) => a.localeCompare(b, 'zh-CN'))
+          }
+
+          const defaultTags = hashes.length === 1
+            ? (torrentStore.torrents.get(hashes[0]!)?.tags ?? []).join(', ')
+            : getCommonTags(hashes).join(', ')
+
+          const allTags = backendStore.tags
+            .map(t => t.trim())
+            .filter(Boolean)
+          const preview = allTags.slice(0, 30)
+          const previewText = preview.length > 0
+            ? `\n\n已有标签（前 ${preview.length} 个）：\n${preview.join('、')}${allTags.length > preview.length ? '…' : ''}`
+            : ''
+
+          const input = prompt(`请输入标签（多个用逗号分隔，留空清空）。${previewText}`, defaultTags)
+          if (input === null) return
+
+          const tags = input
+            .split(/[,，\n]/g)
+            .map(t => t.trim())
+            .filter(Boolean)
+
+          await adapter.value.setTagsBatch(hashes, tags, 'set')
+          await immediateRefresh()
+          return
+        }
       default:
         await runTorrentAction(action as TorrentAction, hashes)
         return
@@ -1184,6 +1238,7 @@ onUnmounted(() => {
           @close="closeDetailPanel"
           @resize="resizeDetailPanel"
           @action="handleTorrentAction"
+          @refresh="immediateRefresh"
         />
 
         <!-- 底部状态栏 -->
@@ -1299,6 +1354,7 @@ onUnmounted(() => {
       :x="contextmenuState.x"
       :y="contextmenuState.y"
       :hashes="contextmenuState.hashes"
+      :can-set-category="backendStore.isQbit"
       @close="contextmenuState.show = false"
       @action="handleContextMenuAction"
     />

@@ -20,6 +20,7 @@ interface Emits {
   (e: 'close'): void
   (e: 'resize', height: number): void
   (e: 'action', action: string, hash: string): void
+  (e: 'refresh'): void
 }
 
 const props = defineProps<Props>()
@@ -31,6 +32,7 @@ const backendStore = useBackendStore()
 const detail = ref<UnifiedTorrentDetail | null>(null)
 const loading = ref(false)
 const error = ref('')
+const mutating = ref(false)
 
 // 当前 Tab
 const activeTab = ref<'overview' | 'files' | 'trackers' | 'peers'>('overview')
@@ -144,6 +146,58 @@ function handleAction(action: string) {
   }
 }
 
+const canRenameTorrent = computed(() => {
+  if (!backendStore.isQbit) return false
+  const fn = (backendStore.adapter as any)?.renameTorrent
+  return typeof fn === 'function'
+})
+
+async function handleRenameTorrent() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  const fn = (backendStore.adapter as any)?.renameTorrent
+  if (typeof fn !== 'function') return
+
+  const current = props.torrent.name
+  const next = prompt('请输入新的种子名称：', current)
+  if (next === null) return
+  const trimmed = next.trim()
+  if (!trimmed || trimmed === current) return
+
+  mutating.value = true
+  try {
+    await fn.call(backendStore.adapter, props.torrent.id, trimmed)
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Rename torrent failed:', err)
+    alert(err instanceof Error ? err.message : '重命名失败')
+  } finally {
+    mutating.value = false
+  }
+}
+
+async function handleSetLocation() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+
+  const current = detail.value?.savePath || props.torrent.savePath || ''
+  const next = prompt('请输入新的保存路径：', current)
+  if (next === null) return
+  const trimmed = next.trim()
+  if (!trimmed || trimmed === current) return
+
+  mutating.value = true
+  try {
+    await backendStore.adapter.setLocation(props.torrent.id, trimmed)
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Set location failed:', err)
+    alert(err instanceof Error ? err.message : '移动位置失败')
+  } finally {
+    mutating.value = false
+  }
+}
+
 // 计算健康度
 function getHealthStatus(torrent: UnifiedTorrent) {
   const hasSeeds = torrent.numSeeds !== undefined && torrent.numSeeds !== null
@@ -239,12 +293,13 @@ const priorityMap: Record<string, { text: string; class: string }> = {
 
 // 文件树节点类型
 interface FileTreeNode {
+  id?: number
   name: string
   path: string
   type: 'file' | 'folder'
   size?: number
   progress?: number
-  priority?: string
+  priority?: TorrentFile['priority']
   children?: FileTreeNode[]
   expanded?: boolean
   level: number
@@ -284,6 +339,7 @@ function buildFileTree(files: TorrentFile[]): FileTreeNode[] {
       if (isFile) {
         // 文件节点
         currentLevel.push({
+          id: file.id,
           name: part,
           path: currentPath,
           type: 'file',
@@ -333,6 +389,36 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
   return {
     size: totalSize,
     progress: totalSize > 0 ? totalProgress / totalSize : 0
+  }
+}
+
+function parsePriority(raw: string): TorrentFile['priority'] | null {
+  if (raw === 'high' || raw === 'normal' || raw === 'low' || raw === 'do_not_download') return raw
+  return null
+}
+
+async function handlePriorityChange(node: FileTreeNode, raw: string) {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (node.type !== 'file') return
+  if (typeof node.id !== 'number') return
+  const next = parsePriority(raw)
+  if (!next) return
+  if (node.priority === next) return
+
+  mutating.value = true
+  try {
+    await backendStore.adapter.setFilePriority(props.torrent.id, [node.id], next)
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to set file priority:', err)
+    alert(err instanceof Error ? err.message : '设置文件优先级失败')
+    try {
+      await fetchDetail()
+    } catch {
+      // ignore
+    }
+  } finally {
+    mutating.value = false
   }
 }
 </script>
@@ -418,6 +504,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
           @click="handleAction(torrent.state === 'paused' ? 'resume' : 'pause')"
           class="icon-btn"
           :title="torrent.state === 'paused' ? '开始' : '暂停'"
+          :disabled="mutating"
         >
           <Icon :name="torrent.state === 'paused' ? 'play' : 'pause'" :size="16" />
         </button>
@@ -428,6 +515,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
           @click="handleAction('reannounce')"
           class="icon-btn"
           title="重新汇报"
+          :disabled="mutating"
         >
           <Icon name="radio" :size="16" />
         </button>
@@ -438,6 +526,7 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
           @click="handleAction('recheck')"
           class="icon-btn"
           title="重新校验"
+          :disabled="mutating"
         >
           <Icon name="refresh-cw" :size="16" />
         </button>
@@ -448,8 +537,31 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
           @click="handleAction('forceStart')"
           class="icon-btn text-amber-600 hover:bg-amber-50 hover:border-amber-200"
           title="强制开始"
+          :disabled="mutating"
         >
           <Icon name="zap" :size="16" />
+        </button>
+
+        <!-- 移动位置 -->
+        <button
+          v-if="torrent"
+          @click="handleSetLocation"
+          class="icon-btn"
+          title="移动位置"
+          :disabled="mutating"
+        >
+          <Icon name="folder-open" :size="16" />
+        </button>
+
+        <!-- 重命名（qB） -->
+        <button
+          v-if="torrent && canRenameTorrent"
+          @click="handleRenameTorrent"
+          class="icon-btn"
+          title="重命名"
+          :disabled="mutating"
+        >
+          <Icon name="edit-2" :size="16" />
         </button>
 
         <!-- 关闭 -->
@@ -737,11 +849,22 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
 
                             <!-- 优先级 -->
                             <div
-                              class="px-3 text-center text-xs font-medium"
-                              :class="priorityMap[grandchild.priority!]?.class || 'text-gray-600'"
+                              class="px-3 text-center"
                               :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)"
                             >
-                              {{ priorityMap[grandchild.priority!]?.text || grandchild.priority }}
+                              <select
+                                :value="grandchild.priority || 'normal'"
+                                @click.stop
+                                @change="handlePriorityChange(grandchild, ($event.target as HTMLSelectElement).value)"
+                                class="w-full bg-transparent text-xs font-medium focus:outline-none"
+                                :class="priorityMap[grandchild.priority || 'normal']?.class || 'text-gray-600'"
+                                :disabled="mutating"
+                              >
+                                <option value="do_not_download">跳过</option>
+                                <option v-if="backendStore.isTrans" value="low">低</option>
+                                <option value="normal">普</option>
+                                <option value="high">高</option>
+                              </select>
                             </div>
                           </div>
                         </template>
@@ -790,11 +913,22 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
 
                       <!-- 优先级 -->
                       <div
-                        class="px-3 text-center text-xs font-medium"
-                        :class="priorityMap[child.priority!]?.class || 'text-gray-600'"
+                        class="px-3 text-center"
                         :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)"
                       >
-                        {{ priorityMap[child.priority!]?.text || child.priority }}
+                        <select
+                          :value="child.priority || 'normal'"
+                          @click.stop
+                          @change="handlePriorityChange(child, ($event.target as HTMLSelectElement).value)"
+                          class="w-full bg-transparent text-xs font-medium focus:outline-none"
+                          :class="priorityMap[child.priority || 'normal']?.class || 'text-gray-600'"
+                          :disabled="mutating"
+                        >
+                          <option value="do_not_download">跳过</option>
+                          <option v-if="backendStore.isTrans" value="low">低</option>
+                          <option value="normal">普</option>
+                          <option value="high">高</option>
+                        </select>
                       </div>
                     </div>
                   </template>
@@ -843,11 +977,22 @@ function calculateFolderStats(node: FileTreeNode): { size: number; progress: num
 
                 <!-- 优先级 -->
                 <div
-                  class="px-3 text-center text-xs font-medium"
-                  :class="priorityMap[node.priority!]?.class || 'text-gray-600'"
+                  class="px-3 text-center"
                   :style="getFlexStyle(filesColumnById, 'priority', false, filesResizeState.isResizing)"
                 >
-                  {{ priorityMap[node.priority!]?.text || node.priority }}
+                  <select
+                    :value="node.priority || 'normal'"
+                    @click.stop
+                    @change="handlePriorityChange(node, ($event.target as HTMLSelectElement).value)"
+                    class="w-full bg-transparent text-xs font-medium focus:outline-none"
+                    :class="priorityMap[node.priority || 'normal']?.class || 'text-gray-600'"
+                    :disabled="mutating"
+                  >
+                    <option value="do_not_download">跳过</option>
+                    <option v-if="backendStore.isTrans" value="low">低</option>
+                    <option value="normal">普</option>
+                    <option value="high">高</option>
+                  </select>
                 </div>
               </div>
             </template>

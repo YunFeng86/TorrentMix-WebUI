@@ -93,6 +93,13 @@ test('Transmission legacy: fetchList should map torrent list + labels + trackerS
             arguments: {
               units: { 'speed-bytes': 1000 },
               'download-dir': '/d',
+              'speed-limit-down-enabled': true,
+              'speed-limit-down': 111,
+              'speed-limit-up-enabled': true,
+              'speed-limit-up': 222,
+              'alt-speed-enabled': true,
+              'alt-speed-down': 5,
+              'alt-speed-up': 6,
             },
           },
         }
@@ -142,6 +149,16 @@ test('Transmission legacy: fetchList should map torrent list + labels + trackerS
     assert.deepEqual(res.tags, ['t2', 't3'])
     assert.equal(t.totalSeeds, 7)
     assert.equal(t.totalPeers, 8)
+
+    assert.equal(res.serverState?.backendName, 'Transmission')
+    assert.equal(res.serverState?.connectionStatus, 'connected')
+    assert.equal(res.serverState?.dlInfoSpeed, 10)
+    assert.equal(res.serverState?.upInfoSpeed, 20)
+    assert.equal(res.serverState?.useAltSpeed, true)
+    assert.equal(res.serverState?.altDlLimit, 5000)
+    assert.equal(res.serverState?.altUpLimit, 6000)
+    assert.equal(res.serverState?.dlRateLimit, 5000)
+    assert.equal(res.serverState?.upRateLimit, 6000)
   } finally {
     mock.restoreAll()
   }
@@ -153,19 +170,26 @@ test('Transmission json-rpc2: fetchList should map torrent list + labels + track
   try {
     mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
       assert.equal(payload.jsonrpc, '2.0')
-      if (payload.method === 'session_get') {
-        return {
-          status: 200,
-          data: {
-            jsonrpc: '2.0',
-            id: payload.id,
-            result: {
-              units: { speed_bytes: 1000 },
-              download_dir: '/z',
+        if (payload.method === 'session_get') {
+          return {
+            status: 200,
+            data: {
+              jsonrpc: '2.0',
+              id: payload.id,
+              result: {
+                units: { speed_bytes: 1000 },
+                download_dir: '/z',
+                speed_limit_down_enabled: true,
+                speed_limit_down: 7,
+                speed_limit_up_enabled: false,
+                speed_limit_up: 9,
+                alt_speed_enabled: false,
+                alt_speed_down: 3,
+                alt_speed_up: 4,
+              },
             },
-          },
+          }
         }
-      }
       assert.equal(payload.method, 'torrent_get')
       assert.ok(Array.isArray(payload.params?.fields))
       assert.ok(payload.params.fields.includes('hash_string'))
@@ -222,6 +246,100 @@ test('Transmission json-rpc2: fetchList should map torrent list + labels + track
     assert.equal(t.totalPeers, 10)
     assert.equal(t.numSeeds, 9)
     assert.equal(t.numPeers, 10)
+
+    assert.equal(res.serverState?.backendName, 'Transmission')
+    assert.equal(res.serverState?.connectionStatus, 'connected')
+    assert.equal(res.serverState?.dlInfoSpeed, 11)
+    assert.equal(res.serverState?.upInfoSpeed, 22)
+    assert.equal(res.serverState?.useAltSpeed, false)
+    assert.equal(res.serverState?.altDlLimit, 3000)
+    assert.equal(res.serverState?.altUpLimit, 4000)
+    assert.equal(res.serverState?.dlRateLimit, 7000)
+    assert.equal(res.serverState?.upRateLimit, 0)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('Transmission json-rpc2: fetchList should reuse transfer settings cache within TTL', async () => {
+  const adapter = new TransAdapter({ rpcSemver: '6.0.0' })
+
+  let sessionGetCalls = 0
+  let torrentGetCalls = 0
+
+  try {
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      assert.equal(payload.jsonrpc, '2.0')
+
+      if (payload.method === 'session_get') {
+        sessionGetCalls++
+        return {
+          status: 200,
+          data: {
+            jsonrpc: '2.0',
+            id: payload.id,
+            result: {
+              units: { speed_bytes: 1000 },
+              download_dir: '/z',
+              speed_limit_down_enabled: true,
+              speed_limit_down: 7,
+              speed_limit_up_enabled: true,
+              speed_limit_up: 8,
+              alt_speed_enabled: false,
+              alt_speed_down: 0,
+              alt_speed_up: 0,
+            },
+          },
+        }
+      }
+
+      assert.equal(payload.method, 'torrent_get')
+      torrentGetCalls++
+
+      return {
+        status: 200,
+        data: {
+          jsonrpc: '2.0',
+          id: payload.id,
+          result: {
+            torrents: [
+              {
+                hash_string: 'h1',
+                name: 'T1',
+                status: 4,
+                error: 0,
+                percent_done: 0,
+                total_size: 1,
+                rate_download: 1,
+                rate_upload: 2,
+                eta: 0,
+                upload_ratio: 0,
+                added_date: 1,
+                download_dir: '/z',
+                labels: [],
+                tracker_stats: [],
+              },
+            ],
+          },
+        },
+      }
+    })
+
+    const res1 = await adapter.fetchList()
+    const res2 = await adapter.fetchList()
+
+    assert.equal(sessionGetCalls, 1)
+    assert.equal(torrentGetCalls, 2)
+
+    assert.equal(res1.serverState?.dlInfoSpeed, 1)
+    assert.equal(res1.serverState?.upInfoSpeed, 2)
+    assert.equal(res1.serverState?.dlRateLimit, 7000)
+    assert.equal(res1.serverState?.upRateLimit, 8000)
+
+    assert.equal(res2.serverState?.dlInfoSpeed, 1)
+    assert.equal(res2.serverState?.upInfoSpeed, 2)
+    assert.equal(res2.serverState?.dlRateLimit, 7000)
+    assert.equal(res2.serverState?.upRateLimit, 8000)
   } finally {
     mock.restoreAll()
   }
@@ -778,6 +896,54 @@ test('Transmission json-rpc2: setTagsBatch add/remove should merge and remove la
     await adapter.setTagsBatch([hash], ['t2', 'catB', 't1'], 'add')
     await adapter.setTagsBatch([hash], ['t1', 'catB'], 'remove')
     assert.equal(call, 4)
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('Transmission json-rpc2: deleteTags should remove labels from all torrents', async () => {
+  const adapter = new TransAdapter({ rpcSemver: '6.0.0' })
+  const tagsToDelete = ['t1']
+
+  const sets: Array<{ ids: string[]; labels: string[] }> = []
+
+  try {
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      assert.equal(payload.jsonrpc, '2.0')
+
+      if (payload.method === 'torrent_get') {
+        const fields = payload.params?.fields
+        assert.deepEqual(Array.isArray(fields) ? fields.sort() : fields, fields)
+        assert.deepEqual(fields, ['hash_string', 'labels'])
+        assert.equal(payload.params?.ids, undefined)
+        return {
+          status: 200,
+          data: {
+            jsonrpc: '2.0',
+            id: payload.id,
+            result: {
+              torrents: [
+                { hash_string: 'h1', labels: ['a', 't1'] },
+                { hash_string: 'h2', labels: ['t1'] },
+              ],
+            },
+          },
+        }
+      }
+
+      assert.equal(payload.method, 'torrent_set')
+      sets.push(payload.params)
+      return { status: 204, data: null }
+    })
+
+    await adapter.deleteTags(...tagsToDelete)
+
+    const normalize = (x: { ids: string[]; labels: string[] }) => ({ ids: [...x.ids].sort(), labels: [...x.labels].sort() })
+    const sorted = sets.map(normalize).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+    assert.deepEqual(sorted, [
+      { ids: ['h1'], labels: ['a'] },
+      { ids: ['h2'], labels: [] },
+    ])
   } finally {
     mock.restoreAll()
   }
