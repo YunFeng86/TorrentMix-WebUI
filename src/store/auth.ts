@@ -12,6 +12,13 @@ function debugLog(...args: unknown[]) {
   if (isDev) console.log(...args)
 }
 
+function isSecuredConnectionByAdapter(adapter: BaseAdapter | null): boolean {
+  if (!adapter) return true
+  const hasCredentials = adapter.hasCredentials
+  if (typeof hasCredentials === 'boolean') return hasCredentials
+  return true
+}
+
 type LoginDeps = {
   detectBackendTypeOnly: (timeout?: number) => Promise<BackendType>
   detectBackendWithVersionAuth: (timeout?: number) => Promise<BackendVersion>
@@ -46,6 +53,8 @@ const DEFAULT_CHECK_SESSION_DEPS: CheckSessionDeps = {
 
 export const useAuthStore = defineStore('auth', () => {
   const isAuthenticated = ref(false)
+  const isSecuredConnection = ref(true)
+  const isDisconnected = ref(false)
   const isChecking = ref(false)
   const isInitializing = ref(false)
 
@@ -54,6 +63,8 @@ export const useAuthStore = defineStore('auth', () => {
     const d = deps ?? DEFAULT_LOGIN_DEPS
 
     try {
+      isDisconnected.value = false
+
       // 第一步：从缓存获取后端类型（登录页已经检测并缓存了）
       const backendType = await d.detectBackendTypeOnly()
       debugLog('[Login] Backend type:', backendType)
@@ -95,6 +106,7 @@ export const useAuthStore = defineStore('auth', () => {
 
       backendStore.setAdapter(finalAdapter, finalVersion)
       isAuthenticated.value = true
+      isSecuredConnection.value = isSecuredConnectionByAdapter(finalAdapter)
       debugLog('[Login] Setup complete, version:', finalVersion)
     } catch (error) {
       console.error('[Login] Login failed:', error)
@@ -103,12 +115,26 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
-    const { adapter } = useBackendStore()
-    await adapter?.logout()
+    const backendStore = useBackendStore()
+    await backendStore.adapter?.logout()
+    backendStore.clearAdapter()
     isAuthenticated.value = false
+    isSecuredConnection.value = true
+    isDisconnected.value = true
+  }
+
+  function disconnect() {
+    const backendStore = useBackendStore()
+    backendStore.clearAdapter()
+    clearVersionCache()
+    isAuthenticated.value = false
+    isSecuredConnection.value = true
+    isDisconnected.value = true
   }
 
   async function checkSession(deps?: CheckSessionDeps): Promise<boolean> {
+    if (isDisconnected.value) return false
+
     const backendStore = useBackendStore()
     const { adapter, isInitialized } = backendStore
 
@@ -133,6 +159,8 @@ export const useAuthStore = defineStore('auth', () => {
         }
 
         isAuthenticated.value = true
+        isDisconnected.value = false
+        isSecuredConnection.value = isSecuredConnectionByAdapter(backendStore.adapter ?? tempAdapter as any)
         return true
       } catch (error) {
         console.warn('[Auth] Session restore failed:', error)
@@ -147,6 +175,10 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       const valid = await adapter.checkSession()
       isAuthenticated.value = valid
+      if (valid) {
+        isDisconnected.value = false
+        isSecuredConnection.value = isSecuredConnectionByAdapter(adapter)
+      }
 
       // 若已通过验证但版本未知（常见于跨域 cookie），尝试补一次带凭证的版本探测，纠正 features/端点映射
       if (valid && backendStore.version?.isUnknown) {
@@ -154,6 +186,7 @@ export const useAuthStore = defineStore('auth', () => {
           const d = deps ?? DEFAULT_CHECK_SESSION_DEPS
           const { adapter: finalAdapter, version: finalVersion } = await d.rebootAdapterWithAuth()
           backendStore.setAdapter(finalAdapter, finalVersion)
+          isSecuredConnection.value = isSecuredConnectionByAdapter(finalAdapter)
         } catch (error) {
           console.warn('[Auth] Reboot adapter with auth failed:', error)
         }
@@ -165,5 +198,5 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  return { isAuthenticated, isChecking, isInitializing, login, logout, checkSession }
+  return { isAuthenticated, isSecuredConnection, isChecking, isInitializing, login, logout, disconnect, checkSession }
 })

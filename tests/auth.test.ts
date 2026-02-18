@@ -92,6 +92,46 @@ test('auth: logout calls adapter.logout and clears authenticated flag', async ()
   assert.equal(auth.isAuthenticated, false)
 })
 
+test('auth: disconnect blocks session restore until next login', async () => {
+  setActivePinia(createPinia())
+
+  const auth = useAuthStore()
+
+  auth.disconnect()
+
+  let called = 0
+  const deps = {
+    createAdapter: async () => {
+      called++
+      throw new Error('not used')
+    },
+    rebootAdapterWithAuth: async () => {
+      called++
+      throw new Error('not used')
+    },
+  }
+
+  const ok = await auth.checkSession(deps as any)
+  assert.equal(ok, false)
+  assert.equal(called, 0)
+})
+
+test('auth: checkSession sets isSecuredConnection from adapter.hasCredentials', async () => {
+  setActivePinia(createPinia())
+
+  const auth = useAuthStore()
+  const backend = useBackendStore()
+
+  const adapter = { checkSession: async () => true, hasCredentials: false }
+  backend.setAdapter(adapter as any, { type: 'trans', version: '4.0.0', major: 4, minor: 0, patch: 0, isUnknown: false } as any)
+
+  const ok = await auth.checkSession()
+
+  assert.equal(ok, true)
+  assert.equal(auth.isAuthenticated, true)
+  assert.equal(auth.isSecuredConnection, false)
+})
+
 test('auth: checkSession restores session and falls back to temp adapter when rebootAdapterWithAuth fails', async () => {
   setActivePinia(createPinia())
 

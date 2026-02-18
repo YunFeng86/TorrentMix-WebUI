@@ -944,12 +944,24 @@ export class TransAdapter implements BaseAdapter {
 
   // 登录认证（Transmission 使用 HTTP Basic Auth）
   async login(username: string, password: string): Promise<void> {
-    transClient.defaults.auth = { username, password }
+    const user = String(username ?? '').trim()
+    const pass = String(password ?? '').trim()
+
+    // 允许“开放后端”不配置凭证：不设置 Basic Auth 头，直接验证 RPC 是否可用。
+    transClient.defaults.auth = (!user && !pass) ? undefined : { username: user, password: pass }
 
     // 验证凭证有效性
     const session = await this.rpcCall<Record<string, unknown>>('session-get')
     this.updateSessionInfo(session)
     this.speedBytesState = 'ready'
+  }
+
+  /**
+   * 当前是否配置了 HTTP Basic Auth 凭证
+   * 用于 UI 层区分显示“退出登录”还是“断开连接”
+   */
+  get hasCredentials(): boolean {
+    return Boolean(transClient.defaults.auth)
   }
 
   // 登出
@@ -959,7 +971,6 @@ export class TransAdapter implements BaseAdapter {
 
   // 静默验证 session
   async checkSession(): Promise<boolean> {
-    if (!transClient.defaults.auth) return false
     try {
       const session = await this.rpcCall<Record<string, unknown>>('session-get')
       this.updateSessionInfo(session)

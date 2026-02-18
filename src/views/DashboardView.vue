@@ -693,10 +693,23 @@ async function handleReannounceSelected() {
 async function handleBatchSpeedLimit() {
   if (uiState.selection.size === 0) return
 
-  const dlLimitInput = prompt('下载限制 (KB/s, 留空或 0 表示不限制):')
+  let speedBytes = 1024
+  if (backendStore.isTrans) {
+    try {
+      const settings = await adapter.value.getTransferSettings()
+      if (typeof settings.speedBytes === 'number' && Number.isFinite(settings.speedBytes) && settings.speedBytes > 0) {
+        speedBytes = settings.speedBytes
+      }
+    } catch (err) {
+      console.warn('[Dashboard] Failed to load speedBytes for batch limits, fallback to 1024:', err)
+    }
+  }
+  const unitLabel = speedBytes === 1000 ? 'kB/s' : 'KiB/s'
+
+  const dlLimitInput = prompt(`下载限制 (${unitLabel}, 留空或 0 表示不限制):`)
   if (dlLimitInput === null) return
 
-  const upLimitInput = prompt('上传限制 (KB/s, 留空或 0 表示不限制):')
+  const upLimitInput = prompt(`上传限制 (${unitLabel}, 留空或 0 表示不限制):`)
   if (upLimitInput === null) return
 
   const hashes = Array.from(uiState.selection)
@@ -706,9 +719,9 @@ async function handleBatchSpeedLimit() {
       if (text === '' || text === '0') return 0
       const kb = Number.parseInt(text, 10)
       if (!Number.isFinite(kb) || kb < 0) {
-        throw new Error('限速请输入非负整数（KB/s）')
+        throw new Error(`限速请输入非负整数（${unitLabel}）`)
       }
-      return kb * 1024
+      return kb * speedBytes
     }
 
     const dlLimit = parseKbLimit(dlLimitInput)
@@ -971,7 +984,7 @@ onUnmounted(() => {
                 <span class="text-xs text-gray-500 max-w-[5rem] truncate">{{ connectionLabel }}</span>
               </div>
 
-              <button @click="logout" class="icon-btn" title="退出">
+              <button v-if="authStore.isSecuredConnection" @click="logout" class="icon-btn" title="退出登录">
                 <Icon name="log-out" :size="16" />
               </button>
             </div>
@@ -1025,7 +1038,7 @@ onUnmounted(() => {
                   </div>
                 </div>
 
-                <button @click="logout" class="icon-btn" title="退出">
+                <button v-if="authStore.isSecuredConnection" @click="logout" class="icon-btn" title="退出登录">
                   <Icon name="log-out" :size="16" />
                 </button>
               </div>

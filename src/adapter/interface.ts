@@ -257,6 +257,14 @@ export interface BaseAdapter {
   login(username: string, password: string): Promise<void>
 
   /**
+   * 当前是否配置了认证凭证（例如 Basic Auth / Cookie）。
+   *
+   * - 用于 UI 区分显示“退出登录”还是“断开连接”
+   * - 未实现时可视为 true
+   */
+  readonly hasCredentials?: boolean
+
+  /**
    * 登出
    */
   logout(): Promise<void>

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/store/auth'
 import { detectBackendTypeOnly } from '@/adapter/detect'
@@ -15,6 +15,8 @@ const error = ref('')
 const loading = ref(false)
 const detecting = ref(true)
 const backendType = ref<BackendType | null>(null)
+
+const isTransmission = computed(() => backendType.value === 'trans')
 
 // 页面加载时检测后端类型（使用缓存）
 onMounted(async () => {
@@ -35,7 +37,9 @@ async function handleSubmit() {
     password.value = ''
     router.push('/')
   } catch {
-    error.value = '登录失败，请检查用户名和密码'
+    error.value = isTransmission.value
+      ? '连接失败，请检查连接地址或凭证配置'
+      : '登录失败，请检查用户名和密码'
     password.value = ''
   } finally {
     loading.value = false
@@ -58,7 +62,7 @@ function getBackendName(): string {
         <div class="inline-flex items-center justify-center w-12 h-12 bg-black rounded-xl mb-4">
           <Icon name="download-cloud" :size="24" class="text-white" />
         </div>
-        <h1 class="text-2xl font-semibold text-gray-900 mb-2">登录</h1>
+        <h1 class="text-2xl font-semibold text-gray-900 mb-2">{{ isTransmission ? '连接' : '登录' }}</h1>
         <p class="text-gray-500 text-sm">
           <span v-if="detecting">正在检测后端...</span>
           <span v-else>访问 {{ getBackendName() }}</span>
@@ -71,14 +75,14 @@ function getBackendName(): string {
           <!-- 用户名 -->
           <div class="space-y-2">
             <label class="block text-sm font-medium text-gray-700">
-              用户名
+              {{ isTransmission ? '用户名（可选）' : '用户名' }}
             </label>
             <input
               v-model="username"
               type="text"
               class="input"
               placeholder="输入用户名"
-              required
+              :required="!isTransmission"
               autocomplete="username"
               :disabled="detecting"
             />
@@ -87,14 +91,14 @@ function getBackendName(): string {
           <!-- 密码 -->
           <div class="space-y-2">
             <label class="block text-sm font-medium text-gray-700">
-              密码
+              {{ isTransmission ? '密码（可选）' : '密码' }}
             </label>
             <input
               v-model="password"
               type="password"
               class="input"
               placeholder="输入密码"
-              required
+              :required="!isTransmission"
               autocomplete="current-password"
               :disabled="detecting"
             />
@@ -116,7 +120,13 @@ function getBackendName(): string {
           >
             <div class="flex items-center justify-center gap-2">
               <Icon v-if="loading" name="loader-2" :size="16" class="animate-spin text-white" />
-              {{ loading ? '登录中...' : detecting ? '检测中...' : '登录' }}
+              {{
+                loading
+                  ? (isTransmission ? '连接中...' : '登录中...')
+                  : detecting
+                    ? '检测中...'
+                    : (isTransmission ? '连接' : '登录')
+              }}
             </div>
           </button>
         </form>

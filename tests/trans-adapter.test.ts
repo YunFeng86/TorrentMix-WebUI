@@ -5,6 +5,82 @@ import { transClient } from '../src/api/trans-client.ts'
 import { TransAdapter } from '../src/adapter/trans/index.ts'
 import { VIRTUAL_ROOT_EXTERNAL_PREFIX } from '../src/utils/folderTree.ts'
 
+test('Transmission: checkSession should succeed without Basic Auth when backend is open', async () => {
+  const adapter = new TransAdapter()
+  const originalAuth = transClient.defaults.auth
+
+  try {
+    transClient.defaults.auth = undefined
+
+    let calls = 0
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      calls++
+      assert.equal(payload.method, 'session-get')
+      return {
+        data: {
+          result: 'success',
+          arguments: {},
+        },
+      }
+    })
+
+    const ok = await adapter.checkSession()
+    assert.equal(ok, true)
+    assert.equal(calls, 1)
+  } finally {
+    transClient.defaults.auth = originalAuth
+    mock.restoreAll()
+  }
+})
+
+test('Transmission: login should trim Basic Auth credentials', async () => {
+  const adapter = new TransAdapter()
+  const originalAuth = transClient.defaults.auth
+
+  try {
+    transClient.defaults.auth = undefined
+
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      assert.equal(payload.method, 'session-get')
+      assert.deepEqual(transClient.defaults.auth, { username: 'admin', password: 'pass' })
+      return {
+        data: {
+          result: 'success',
+          arguments: {},
+        },
+      }
+    })
+
+    await adapter.login('  admin  ', '  pass  ')
+    assert.deepEqual(transClient.defaults.auth, { username: 'admin', password: 'pass' })
+  } finally {
+    transClient.defaults.auth = originalAuth
+    mock.restoreAll()
+  }
+})
+
+test('Transmission: checkSession should return false when unauthorized', async () => {
+  const adapter = new TransAdapter()
+  const originalAuth = transClient.defaults.auth
+
+  try {
+    transClient.defaults.auth = undefined
+
+    let calls = 0
+    mock.method(transClient as any, 'post', async () => {
+      calls++
+      throw new Error('Unauthorized')
+    })
+
+    const ok = await adapter.checkSession()
+    assert.equal(ok, false)
+    assert.equal(calls, 1)
+  } finally {
+    transClient.defaults.auth = originalAuth
+    mock.restoreAll()
+  }
+})
+
 test('Transmission legacy: fetchList should map torrent list + labels + trackerStats', async () => {
   const adapter = new TransAdapter()
 
