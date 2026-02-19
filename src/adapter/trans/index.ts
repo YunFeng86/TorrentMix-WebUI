@@ -1,5 +1,5 @@
 import { transClient } from '@/api/trans-client'
-import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
+import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities, TorrentBandwidthPriority } from '../interface'
 import type { Category, Peer, ServerState, TorrentFile, TorrentState, Tracker, UnifiedTorrent, UnifiedTorrentDetail } from '../types'
 import { VIRTUAL_ROOT_EXTERNAL, VIRTUAL_ROOT_EXTERNAL_PREFIX } from '@/utils/folderTree'
 
@@ -11,9 +11,14 @@ import { VIRTUAL_ROOT_EXTERNAL, VIRTUAL_ROOT_EXTERNAL_PREFIX } from '@/utils/fol
 type TrMethod =
   | 'session-get'
   | 'session-set'
+  | 'queue-move-top'
+  | 'queue-move-up'
+  | 'queue-move-down'
+  | 'queue-move-bottom'
   | 'torrent-get'
   | 'torrent-set'
   | 'torrent-set-location'
+  | 'torrent-rename-path'
   | 'torrent-add'
   | 'torrent-remove'
   | 'torrent-start'
@@ -25,9 +30,14 @@ type TrMethod =
 const METHOD_MAP: Record<TrMethod, { jsonrpc2: string; legacy: string }> = {
   'session-get': { jsonrpc2: 'session_get', legacy: 'session-get' },
   'session-set': { jsonrpc2: 'session_set', legacy: 'session-set' },
+  'queue-move-top': { jsonrpc2: 'queue_move_top', legacy: 'queue-move-top' },
+  'queue-move-up': { jsonrpc2: 'queue_move_up', legacy: 'queue-move-up' },
+  'queue-move-down': { jsonrpc2: 'queue_move_down', legacy: 'queue-move-down' },
+  'queue-move-bottom': { jsonrpc2: 'queue_move_bottom', legacy: 'queue-move-bottom' },
   'torrent-get': { jsonrpc2: 'torrent_get', legacy: 'torrent-get' },
   'torrent-set': { jsonrpc2: 'torrent_set', legacy: 'torrent-set' },
   'torrent-set-location': { jsonrpc2: 'torrent_set_location', legacy: 'torrent-set-location' },
+  'torrent-rename-path': { jsonrpc2: 'torrent_rename_path', legacy: 'torrent-rename-path' },
   'torrent-add': { jsonrpc2: 'torrent_add', legacy: 'torrent-add' },
   'torrent-remove': { jsonrpc2: 'torrent_remove', legacy: 'torrent-remove' },
   'torrent-start': { jsonrpc2: 'torrent_start', legacy: 'torrent-start' },
@@ -161,6 +171,8 @@ interface TRTorrent {
   peers_getting_from_us?: number
   peersSendingToUs?: number
   peers_sending_to_us?: number
+  bandwidthPriority?: number
+  bandwidth_priority?: number
   files?: Array<{
     name: string
     length: number
@@ -168,6 +180,7 @@ interface TRTorrent {
     bytes_completed?: number
   }>
   trackers?: Array<{
+    id?: number
     announce: string
     tier: number
   }>
@@ -769,6 +782,7 @@ export class TransAdapter implements BaseAdapter {
       // 队列相关
       hasSeparateSeedQueue: true, // TR 的下载/做种队列是独立的
       hasStalledQueue: true,       // 支持 queue-stalled-minutes
+      hasTorrentQueue: true,
 
       // 协议相关
       hasLSD: true,                // 支持 LPD（本地发现）
@@ -785,6 +799,19 @@ export class TransAdapter implements BaseAdapter {
       hasIncompleteDir: true,      // 支持 incomplete-dir
       hasCreateSubfolder: false,
       hasIncompleteFilesSuffix: true,
+
+      hasTrackerManagement: true,
+      hasPeerManagement: false,
+      hasBandwidthPriority: true,
+      hasTorrentAdvancedSwitches: false,
+      hasAutoManagement: false,
+      hasSequentialDownload: false,
+      hasFirstLastPiecePriority: false,
+      hasSuperSeeding: false,
+
+      hasLogs: false,
+      hasRss: false,
+      hasSearch: false,
 
       // 高级功能
       hasProxy: false,             // 不支持代理设置
@@ -1071,16 +1098,17 @@ export class TransAdapter implements BaseAdapter {
 
     const call = async () => this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', {
       ids: [hash],
-      fields: this.protocolVersion === 'json-rpc2'
-        ? [
-            'hash_string', 'name',
-            'total_size',
-            'downloaded_ever', 'uploaded_ever',
-            'download_limit', 'download_limited',
-            'upload_limit', 'upload_limited',
-            'seconds_seeding',
-            'added_date', 'done_date',
-            'download_dir',
+          fields: this.protocolVersion === 'json-rpc2'
+          ? [
+              'hash_string', 'name',
+              'total_size',
+              'downloaded_ever', 'uploaded_ever',
+              'bandwidth_priority',
+              'download_limit', 'download_limited',
+              'upload_limit', 'upload_limited',
+              'seconds_seeding',
+              'added_date', 'done_date',
+              'download_dir',
             ...(this.supportsLabels ? ['labels'] : []),
             'peers_connected',
             'peers_getting_from_us',
@@ -1092,15 +1120,16 @@ export class TransAdapter implements BaseAdapter {
             'priorities',
             'wanted',
           ]
-        : [
-            'hashString', 'name',
-            'totalSize',
-            'downloadedEver', 'uploadedEver',
-            'downloadLimit', 'downloadLimited',
-            'uploadLimit', 'uploadLimited',
-            'secondsSeeding',
-            'addedDate', 'doneDate',
-            'downloadDir',
+          : [
+              'hashString', 'name',
+              'totalSize',
+              'downloadedEver', 'uploadedEver',
+              'bandwidthPriority',
+              'downloadLimit', 'downloadLimited',
+              'uploadLimit', 'uploadLimited',
+              'secondsSeeding',
+              'addedDate', 'doneDate',
+              'downloadDir',
             ...(this.supportsLabels ? ['labels'] : []),
             'peersConnected',
             'peersGettingFromUs',
@@ -1198,6 +1227,14 @@ export class TransAdapter implements BaseAdapter {
     const dlLimitKb = this.pick<number>(torrent as any, 'download_limit', 'downloadLimit') ?? 0
     const upLimited = this.pick<boolean>(torrent as any, 'upload_limited', 'uploadLimited') ?? false
     const upLimitKb = this.pick<number>(torrent as any, 'upload_limit', 'uploadLimit') ?? 0
+    const bandwidthPriorityRaw = this.pick<number>(torrent as any, 'bandwidth_priority', 'bandwidthPriority')
+    const bandwidthPriority: UnifiedTorrentDetail['bandwidthPriority'] = bandwidthPriorityRaw === 1
+      ? 'high'
+      : bandwidthPriorityRaw === -1
+        ? 'low'
+        : bandwidthPriorityRaw === 0
+          ? 'normal'
+          : undefined
 
     // Transmission 的 swarm 总数来自 trackerStats；连接侧的 seeds/leechers 只能用 peers 列表近似统计。
     // 注意：peers 列表可能被 daemon 截断（不是完整连接），因此这两个值更偏“可见连接”而非精确值。
@@ -1229,6 +1266,7 @@ export class TransAdapter implements BaseAdapter {
       files,
       trackers,
       peers,
+      ...(bandwidthPriority ? { bandwidthPriority } : {}),
     }
   }
 
@@ -1256,6 +1294,96 @@ export class TransAdapter implements BaseAdapter {
 
   async forceStartBatch(hashes: string[], value: boolean): Promise<void> {
     await this.rpcCall(value ? 'torrent-start-now' : 'torrent-start', this.buildIds(hashes))
+  }
+
+  async queueMoveTop(hashes: string[]): Promise<void> {
+    await this.rpcCall('queue-move-top', this.buildIds(hashes))
+  }
+
+  async queueMoveUp(hashes: string[]): Promise<void> {
+    await this.rpcCall('queue-move-up', this.buildIds(hashes))
+  }
+
+  async queueMoveDown(hashes: string[]): Promise<void> {
+    await this.rpcCall('queue-move-down', this.buildIds(hashes))
+  }
+
+  async queueMoveBottom(hashes: string[]): Promise<void> {
+    await this.rpcCall('queue-move-bottom', this.buildIds(hashes))
+  }
+
+  private async getTorrentTrackers(hash: string): Promise<Array<{ id: number; announce: string }>> {
+    const fields = this.protocolVersion === 'json-rpc2'
+      ? ['hash_string', 'trackers']
+      : ['hashString', 'trackers']
+
+    const data = await this.rpcCall<{ torrents: TRTorrent[] }>('torrent-get', { ids: [hash], fields })
+    const torrent = data.torrents?.[0]
+    const trackers = torrent?.trackers
+    if (!Array.isArray(trackers)) return []
+
+    const out: Array<{ id: number; announce: string }> = []
+    for (const t of trackers) {
+      const id = typeof t.id === 'number' && Number.isFinite(t.id) ? t.id : null
+      const announce = String((t as any)?.announce ?? '').trim()
+      if (id === null || !announce) continue
+      out.push({ id, announce })
+    }
+
+    return out
+  }
+
+  async addTrackers(hash: string, urls: string[]): Promise<void> {
+    const sanitized = urls.map(u => u.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+    const key = this.protocolVersion === 'json-rpc2' ? 'tracker_add' : 'trackerAdd'
+    await this.rpcCall('torrent-set', { ids: [hash], [key]: sanitized })
+  }
+
+  async editTracker(hash: string, origUrl: string, newUrl: string): Promise<void> {
+    const from = String(origUrl ?? '').trim()
+    const to = String(newUrl ?? '').trim()
+    if (!from || !to || from === to) return
+    const trackers = await this.getTorrentTrackers(hash)
+    const ids = trackers.filter(t => t.announce === from).map(t => t.id)
+    if (ids.length === 0) return
+
+    const key = this.protocolVersion === 'json-rpc2' ? 'tracker_replace' : 'trackerReplace'
+    for (const id of ids) {
+      await this.rpcCall('torrent-set', {
+        ids: [hash],
+        [key]: [id, to],
+      })
+    }
+  }
+
+  async removeTrackers(hash: string, urls: string[]): Promise<void> {
+    const sanitized = urls.map(u => u.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+    const removeSet = new Set(sanitized)
+    const trackers = await this.getTorrentTrackers(hash)
+    const ids = trackers.filter(t => removeSet.has(t.announce)).map(t => t.id)
+    if (ids.length === 0) return
+
+    const key = this.protocolVersion === 'json-rpc2' ? 'tracker_remove' : 'trackerRemove'
+    await this.rpcCall('torrent-set', {
+      ids: [hash],
+      [key]: ids,
+    })
+  }
+
+  private mapBandwidthPriority(priority: TorrentBandwidthPriority): number {
+    if (priority === 'high') return 1
+    if (priority === 'low') return -1
+    return 0
+  }
+
+  async setBandwidthPriority(hashes: string[], priority: TorrentBandwidthPriority): Promise<void> {
+    const key = this.protocolVersion === 'json-rpc2' ? 'bandwidth_priority' : 'bandwidthPriority'
+    await this.rpcCall('torrent-set', {
+      ...this.buildIds(hashes),
+      [key]: this.mapBandwidthPriority(priority),
+    })
   }
 
   async setDownloadLimit(hash: string, limit: number): Promise<void> {
@@ -1304,6 +1432,43 @@ export class TransAdapter implements BaseAdapter {
       location,
       move: true,
     })
+  }
+
+  private normalizePath(path: string): string {
+    return String(path ?? '')
+      .trim()
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .replace(/^\/+/, '')
+      .replace(/\/+$/, '')
+  }
+
+  private extractBasename(path: string): string {
+    const normalized = this.normalizePath(path)
+    if (!normalized) return ''
+    const parts = normalized.split('/').filter(Boolean)
+    return parts[parts.length - 1] ?? ''
+  }
+
+  private async renamePath(hash: string, oldPath: string, newPath: string): Promise<void> {
+    const from = this.normalizePath(oldPath)
+    const toName = this.extractBasename(newPath)
+    if (!from || !toName) return
+    if (this.extractBasename(from) === toName) return
+
+    await this.rpcCall('torrent-rename-path', {
+      ids: [hash],
+      path: from,
+      name: toName,
+    })
+  }
+
+  async renameFile(hash: string, oldPath: string, newPath: string): Promise<void> {
+    await this.renamePath(hash, oldPath, newPath)
+  }
+
+  async renameFolder(hash: string, oldPath: string, newPath: string): Promise<void> {
+    await this.renamePath(hash, oldPath, newPath)
   }
 
   async setCategory(hash: string, category: string): Promise<void> {

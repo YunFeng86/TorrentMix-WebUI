@@ -61,6 +61,96 @@ export interface TransferSettings {
   partial?: boolean
 }
 
+export type TorrentBandwidthPriority = 'low' | 'normal' | 'high'
+
+export type AppLogLevel = 'normal' | 'info' | 'warning' | 'critical'
+
+export interface AppLogEntry {
+  id: number
+  timestamp: number
+  level: AppLogLevel
+  message: string
+}
+
+export interface PeerLogEntry {
+  id: number
+  ip: string
+  timestamp: number
+  blocked: boolean
+  reason: string
+}
+
+export interface RssArticle {
+  id: string
+  title: string
+  link?: string
+  torrentURL?: string
+  date?: string
+  isRead?: boolean
+}
+
+export interface RssFeed {
+  url: string
+  articles?: RssArticle[]
+  [key: string]: unknown
+}
+
+export type RssItem = string | RssFeed | { [key: string]: RssItem }
+
+export type RssItems = { [key: string]: RssItem }
+
+export interface RssRuleDefinition {
+  enabled?: boolean
+  mustContain?: string
+  mustNotContain?: string
+  useRegex?: boolean
+  episodeFilter?: string
+  smartFilter?: boolean
+  previouslyMatchedEpisodes?: string[]
+  affectedFeeds?: string[]
+  ignoreDays?: number
+  lastMatch?: string
+  addPaused?: boolean
+  assignedCategory?: string
+  savePath?: string
+}
+
+export interface SearchJobStatus {
+  id: number
+  status: 'Running' | 'Stopped'
+  total: number
+}
+
+export interface SearchResultItem {
+  descrLink: string
+  fileName: string
+  fileSize: number
+  fileUrl: string
+  nbLeechers: number
+  nbSeeders: number
+  siteUrl: string
+}
+
+export interface SearchResults {
+  results: SearchResultItem[]
+  status: 'Running' | 'Stopped'
+  total: number
+}
+
+export interface SearchPluginCategory {
+  id: string
+  name: string
+}
+
+export interface SearchPlugin {
+  enabled: boolean
+  fullName: string
+  name: string
+  supportedCategories: SearchPluginCategory[]
+  url: string
+  version: string
+}
+
 /**
  * 后端能力标记（用于 UI 动态显示不同后端的设置项）
  */
@@ -70,6 +160,8 @@ export interface BackendCapabilities {
   hasSeparateSeedQueue: boolean
   /** 是否支持队列停滞检测 */
   hasStalledQueue: boolean
+  /** 是否支持种子队列顺序调整（提高/降低/置顶/置底） */
+  hasTorrentQueue: boolean
 
   // ========== 协议相关 ==========
   /** 是否支持本地发现（qB: LSD / TR: LPD） */
@@ -100,6 +192,25 @@ export interface BackendCapabilities {
   hasCreateSubfolder: boolean
   /** 是否支持“未完成文件后缀”选项（qB: .!qB / TR: .part） */
   hasIncompleteFilesSuffix: boolean
+
+  // ========== 种子详情能力 ==========
+  /** 是否支持 Tracker 增删改 */
+  hasTrackerManagement: boolean
+  /** 是否支持 Peer 管理（添加/封禁等） */
+  hasPeerManagement: boolean
+  /** 是否支持单种子带宽优先级（Transmission bandwidthPriority） */
+  hasBandwidthPriority: boolean
+  /** 是否支持种子高级开关（自动管理/顺序下载/首尾块优先/超级做种） */
+  hasTorrentAdvancedSwitches: boolean
+  hasAutoManagement: boolean
+  hasSequentialDownload: boolean
+  hasFirstLastPiecePriority: boolean
+  hasSuperSeeding: boolean
+
+  // ========== 工具 ==========
+  hasLogs: boolean
+  hasRss: boolean
+  hasSearch: boolean
 
   // ========== 高级功能（Phase 2） ==========
   /** 是否支持代理设置（qB 专属） */
@@ -320,6 +431,50 @@ export interface BaseAdapter {
    */
   forceStartBatch(hashes: string[], value: boolean): Promise<void>
 
+  // ========== 队列/优先级 ==========
+
+  /**
+   * 队列置顶
+   */
+  queueMoveTop(hashes: string[]): Promise<void>
+
+  /**
+   * 队列上移（提高优先级）
+   */
+  queueMoveUp(hashes: string[]): Promise<void>
+
+  /**
+   * 队列下移（降低优先级）
+   */
+  queueMoveDown(hashes: string[]): Promise<void>
+
+  /**
+   * 队列置底
+   */
+  queueMoveBottom(hashes: string[]): Promise<void>
+
+  // ========== 种子高级开关（按后端能力） ==========
+
+  setAutoManagement?(hashes: string[], enable: boolean): Promise<void>
+  setSequentialDownload?(hashes: string[], enable: boolean): Promise<void>
+  setFirstLastPiecePriority?(hashes: string[], enable: boolean): Promise<void>
+  setSuperSeeding?(hashes: string[], value: boolean): Promise<void>
+
+  // ========== Tracker 管理 ==========
+
+  addTrackers(hash: string, urls: string[]): Promise<void>
+  editTracker(hash: string, origUrl: string, newUrl: string): Promise<void>
+  removeTrackers(hash: string, urls: string[]): Promise<void>
+
+  // ========== Peer 管理（qB 专属） ==========
+
+  addPeers?(hashes: string[], peers: string[]): Promise<void>
+  banPeers?(peers: string[]): Promise<void>
+
+  // ========== 单种子带宽优先级（TR） ==========
+
+  setBandwidthPriority?(hashes: string[], priority: TorrentBandwidthPriority): Promise<void>
+
   /**
    * 设置下载限速
    * @param hash - 种子 hash/id
@@ -485,6 +640,48 @@ export interface BaseAdapter {
    * @param newPath - 新文件夹路径
    */
   renameFolder?(hash: string, oldPath: string, newPath: string): Promise<void>
+
+  // ========== 日志（qB 专属） ==========
+
+  getAppLog?(params?: {
+    normal?: boolean
+    info?: boolean
+    warning?: boolean
+    critical?: boolean
+    lastKnownId?: number
+  }): Promise<AppLogEntry[]>
+
+  getPeerLog?(params?: { lastKnownId?: number }): Promise<PeerLogEntry[]>
+
+  // ========== RSS（qB 专属，实验性） ==========
+
+  rssAddFolder?(path: string): Promise<void>
+  rssAddFeed?(url: string, path?: string): Promise<void>
+  rssRemoveItem?(path: string): Promise<void>
+  rssMoveItem?(itemPath: string, destPath: string): Promise<void>
+  rssGetItems?(withData?: boolean): Promise<RssItems>
+  rssMarkAsRead?(itemPath: string, articleId?: string): Promise<void>
+  rssRefreshItem?(itemPath: string): Promise<void>
+
+  rssSetRule?(ruleName: string, ruleDef: RssRuleDefinition): Promise<void>
+  rssRenameRule?(ruleName: string, newRuleName: string): Promise<void>
+  rssRemoveRule?(ruleName: string): Promise<void>
+  rssGetRules?(): Promise<Record<string, RssRuleDefinition>>
+  rssMatchingArticles?(ruleName: string): Promise<Record<string, string[]>>
+
+  // ========== Search（qB 专属） ==========
+
+  searchStart?(params: { pattern: string; plugins?: string; category?: string }): Promise<number>
+  searchStop?(id: number): Promise<void>
+  searchDelete?(id: number): Promise<void>
+  searchStatus?(id?: number): Promise<SearchJobStatus[]>
+  searchResults?(params: { id: number; limit?: number; offset?: number }): Promise<SearchResults>
+
+  searchPlugins?(): Promise<SearchPlugin[]>
+  searchInstallPlugin?(sources: string[]): Promise<void>
+  searchUninstallPlugin?(names: string[]): Promise<void>
+  searchEnablePlugin?(names: string[], enable: boolean): Promise<void>
+  searchUpdatePlugins?(): Promise<void>
 
   // ========== 应用偏好设置 ==========
 

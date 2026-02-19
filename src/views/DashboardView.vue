@@ -23,6 +23,7 @@ import ColumnSettingsDialog from '@/components/ColumnSettingsDialog.vue'
 import BackendSettingsDialog from '@/components/BackendSettingsDialog.vue'
 import CategoryManageDialog from '@/components/CategoryManageDialog.vue'
 import TagManageDialog from '@/components/TagManageDialog.vue'
+import ToolsDialog from '@/components/ToolsDialog.vue'
 import FolderTree from '@/components/FolderTree.vue'
 import Icon from '@/components/Icon.vue'
 import TorrentContextMenu from '@/components/torrent/contextmenu/TorrentContextMenu.vue'
@@ -61,6 +62,8 @@ const {
   refreshList,
   runTorrentAction,
 } = torrentContext
+
+const capabilities = computed(() => backendStore.capabilities)
 
 const sidebarCollapsed = ref(false)
 const isMobile = ref(window.innerWidth < 768)
@@ -173,6 +176,7 @@ const showCategoryManage = ref(false)
 const showTagManage = ref(false)
 const showColumnSettings = ref(false)
 const showBackendSettings = ref(false)
+const showToolsDialog = ref(false)
 
 // 右键菜单状态
 const contextmenuState = ref({
@@ -463,6 +467,18 @@ function handleToolbarAction(actionId: string) {
     case 'batchSpeedLimit':
       void handleBatchSpeedLimit()
       break
+    case 'queueTopSelected':
+      void runTorrentAction('queue-top', Array.from(uiState.selection), { clearSelection: true })
+      break
+    case 'queueUpSelected':
+      void runTorrentAction('queue-up', Array.from(uiState.selection), { clearSelection: true })
+      break
+    case 'queueDownSelected':
+      void runTorrentAction('queue-down', Array.from(uiState.selection), { clearSelection: true })
+      break
+    case 'queueBottomSelected':
+      void runTorrentAction('queue-bottom', Array.from(uiState.selection), { clearSelection: true })
+      break
     case 'categoryManage':
       showCategoryManage.value = true
       break
@@ -474,6 +490,9 @@ function handleToolbarAction(actionId: string) {
       break
     case 'backendSettings':
       showBackendSettings.value = true
+      break
+    case 'tools':
+      showToolsDialog.value = true
       break
   }
 }
@@ -491,6 +510,10 @@ const toolbarBatchItems = computed<OverflowActionItem[]>(() => [
   { id: 'reannounceSelected', title: '重新汇报', icon: 'radio', disabled: selectedCount.value === 0, pinned: true, priority: 1, group: 'batch', groupLabel: '批量' },
   { id: 'forceStartSelected', title: '强制开始', icon: 'zap', disabled: selectedCount.value === 0, pinned: true, priority: 2, group: 'batch', groupLabel: '批量' },
   { id: 'batchSpeedLimit', title: '批量限速', icon: 'sliders', disabled: selectedCount.value === 0, pinned: true, priority: 3, group: 'batch', groupLabel: '批量' },
+  { id: 'queueTopSelected', title: '置顶', icon: 'chevrons-up', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 10, group: 'queue', groupLabel: '队列' },
+  { id: 'queueUpSelected', title: '上移', icon: 'chevron-up', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 11, group: 'queue', groupLabel: '队列' },
+  { id: 'queueDownSelected', title: '下移', icon: 'chevron-down', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 12, group: 'queue', groupLabel: '队列' },
+  { id: 'queueBottomSelected', title: '置底', icon: 'chevrons-down', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 13, group: 'queue', groupLabel: '队列' },
 ])
 
 const toolbarSelectItems = computed<OverflowActionItem[]>(() => [
@@ -502,6 +525,7 @@ const toolbarManageItems = computed<OverflowActionItem[]>(() => [
   { id: 'categoryManage', title: '分类管理', icon: 'folder', show: backendStore.isQbit, pinned: false, priority: 11, group: 'manage', groupLabel: '管理' },
   { id: 'tagManage', title: '标签管理', icon: 'tag', show: backendStore.isQbit || backendStore.isTrans, pinned: false, priority: 12, group: 'manage', groupLabel: '管理' },
   { id: 'backendSettings', title: '设置', icon: 'settings', pinned: false, priority: 13, group: 'manage', groupLabel: '管理' },
+  { id: 'tools', title: '工具', icon: 'activity', show: capabilities.value.hasLogs || capabilities.value.hasRss || capabilities.value.hasSearch, pinned: false, priority: 14, group: 'manage', groupLabel: '管理' },
 ])
 
 const toolbarSingleRowLeftItems = computed<OverflowActionItem[]>(() => [
@@ -532,6 +556,7 @@ const { start: startPolling, failureCount, isCircuitBroken } = usePolling({
   fn: async () => {
     await refreshList()
   },
+  shouldSkip: () => backendStore.isMutating,
   // 遇到 403 立即跳转登录
   onFatalError: (error) => {
     if (error instanceof AuthError) {
@@ -1336,6 +1361,12 @@ onUnmounted(() => {
       @close="showBackendSettings = false; immediateRefresh()"
     />
 
+    <!-- 工具对话框（Logs / RSS / Search） -->
+    <ToolsDialog
+      :open="showToolsDialog"
+      @close="showToolsDialog = false"
+    />
+
     <!-- 分类管理对话框 -->
     <CategoryManageDialog
       v-if="showCategoryManage"
@@ -1355,6 +1386,7 @@ onUnmounted(() => {
       :y="contextmenuState.y"
       :hashes="contextmenuState.hashes"
       :can-set-category="backendStore.isQbit"
+      :can-queue="capabilities.hasTorrentQueue"
       @close="contextmenuState.show = false"
       @action="handleContextMenuAction"
     />

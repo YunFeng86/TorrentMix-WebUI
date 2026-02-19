@@ -166,6 +166,13 @@ export interface UnifiedTorrentDetail {
   files: TorrentFile[]
   trackers: Tracker[]
   peers: Peer[]
+
+  // ========== 高级能力（按后端支持情况） ==========
+  autoManagement?: boolean
+  sequentialDownload?: boolean
+  firstLastPiecePriority?: boolean
+  superSeeding?: boolean
+  bandwidthPriority?: 'low' | 'normal' | 'high'
 }
 
 // 文件信息
@@ -219,6 +226,10 @@ export interface QBTorrentInfo {
   num_leechs?: number
   num_complete?: number
   num_incomplete?: number
+  auto_tmm?: boolean
+  seq_dl?: boolean
+  f_l_piece_prio?: boolean
+  super_seeding?: boolean
 }
 
 // qBittorrent /torrents/properties（Get torrent generic properties）响应

@@ -67,11 +67,10 @@ const encryptionLabels: Record<NonNullable<BackendPreferences['encryption']>, st
 const prefsForm = ref<BackendPreferences>({})
 
 // 后端能力标记
-const capabilities = computed<BackendCapabilities | null>(() => adapter.value?.getCapabilities() ?? null)
+const capabilities = computed<BackendCapabilities>(() => backendStore.capabilities)
 
 const backendLabel = computed(() => {
   const caps = capabilities.value
-  if (!caps) return backendStore.backendName
   if (caps.hasProxy || caps.hasScheduler || caps.hasIPFilter || caps.hasCreateSubfolder) return 'qBittorrent'
   if (caps.hasTrashTorrentFiles || caps.hasBlocklist || caps.hasScripts) return 'Transmission'
   return backendStore.backendName

@@ -17,6 +17,8 @@ export interface PollingOptions {
   pauseWhenHidden?: boolean
   /** 遇到致命错误时的回调（如 403），轮询将立即停止 */
   onFatalError?: (error: Error) => void
+  /** 是否跳过本轮轮询（例如全局正在执行写操作） */
+  shouldSkip?: () => boolean
   /** 轮询函数 */
   fn: () => Promise<void>
 }
@@ -71,6 +73,7 @@ export function usePolling(options: PollingOptions): PollingController {
     circuitBreakerDelay = 60000,
     pauseWhenHidden = true,
     onFatalError,
+    shouldSkip,
     fn
   } = options
 
@@ -127,6 +130,14 @@ export function usePolling(options: PollingOptions): PollingController {
    */
   async function tick() {
     if (isPaused || !isPolling.value) return
+
+    // 主动跳过：例如正在进行写操作，避免轮询与操作互相“打架”导致 UI 闪回
+    if (shouldSkip && shouldSkip()) {
+      if (isPolling.value) {
+        timer = setTimeout(tick, currentInterval.value)
+      }
+      return
+    }
 
     try {
       await fn()

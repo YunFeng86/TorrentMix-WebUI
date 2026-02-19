@@ -6,7 +6,21 @@ import type {
   UnifiedTorrentDetail, TorrentFile, Tracker, Peer,
   QBTorrentInfo, QBTorrentGenericProperties, QBFile, QBTracker, QBPeer
 } from '../types'
-import type { BaseAdapter, AddTorrentParams, FetchListResult, TransferSettings, BackendPreferences, BackendCapabilities } from '../interface'
+import type {
+  BaseAdapter,
+  AddTorrentParams,
+  FetchListResult,
+  TransferSettings,
+  BackendPreferences,
+  BackendCapabilities,
+  AppLogEntry,
+  PeerLogEntry,
+  RssItems,
+  RssRuleDefinition,
+  SearchJobStatus,
+  SearchResults,
+  SearchPlugin,
+} from '../interface'
 
 const IS_DEV = Boolean((import.meta as any).env?.DEV)
 
@@ -42,6 +56,14 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   protected currentTags: string[] = []
   protected currentServerState: ServerState | null = null
   protected consecutiveErrors = 0
+
+  private toolsCapabilities = {
+    hasRss: false,
+    hasSearch: false,
+    lastProbeAt: 0,
+  }
+
+  private toolsProbePromise: Promise<void> | null = null
 
   async fetchList(): Promise<FetchListResult> {
     try {
@@ -146,6 +168,17 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         }
       }
 
+      // 能力探测：RSS/Search 可能因配置或环境缺失而不可用（避免 UI 乐观标记误导用户）
+      if (this.toolsCapabilities.lastProbeAt === 0) {
+        await this.probeToolsCapabilities().catch(error => {
+          if (IS_DEV) console.warn('[QbitAdapter] Tools capability probe failed:', error)
+        })
+      } else {
+        void this.probeToolsCapabilities().catch(error => {
+          if (IS_DEV) console.warn('[QbitAdapter] Tools capability probe failed:', error)
+        })
+      }
+
       return {
         torrents: this.currentMap,
         categories: new Map(this.currentCategories),
@@ -188,6 +221,46 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       }
       throw error
     }
+  }
+
+  private async probeToolsCapabilities(): Promise<void> {
+    const now = Date.now()
+    const TTL = 5 * 60 * 1000
+
+    if (this.toolsProbePromise) return this.toolsProbePromise
+    if (this.toolsCapabilities.lastProbeAt > 0 && now - this.toolsCapabilities.lastProbeAt < TTL) return
+
+    this.toolsProbePromise = (async () => {
+      const [prefsRes, searchPluginsRes] = await Promise.all([
+        silentApiClient.get<Record<string, unknown>>('/api/v2/app/preferences').catch(() => null),
+        silentApiClient.get<unknown>('/api/v2/search/plugins').catch(() => null),
+      ])
+
+      // RSS: preferences.rss_processing_enabled
+      if (prefsRes?.data && typeof prefsRes.data === 'object') {
+        const raw = (prefsRes.data as any).rss_processing_enabled as unknown
+        if (typeof raw === 'boolean') {
+          this.toolsCapabilities.hasRss = raw
+        } else if (typeof raw === 'number' && Number.isFinite(raw)) {
+          this.toolsCapabilities.hasRss = raw !== 0
+        } else if (typeof raw === 'string') {
+          const normalized = raw.trim().toLowerCase()
+          if (normalized === '1' || normalized === 'true') this.toolsCapabilities.hasRss = true
+          if (normalized === '0' || normalized === 'false') this.toolsCapabilities.hasRss = false
+        }
+      }
+
+      // Search: /api/v2/search/plugins 返回数组则认为可用（Python/插件缺失时通常会报错或非数组）
+      if (searchPluginsRes?.data !== undefined) {
+        this.toolsCapabilities.hasSearch = Array.isArray(searchPluginsRes.data)
+      }
+
+      this.toolsCapabilities.lastProbeAt = now
+    })().finally(() => {
+      this.toolsProbePromise = null
+    })
+
+    return this.toolsProbePromise
   }
 
   abstract pause(hashes: string[]): Promise<void>
@@ -357,6 +430,10 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
         savePath: (typeof info.save_path === 'string' ? info.save_path : (props.save_path ?? '')),
         category: typeof info.category === 'string' ? info.category : '',
         tags: typeof info.tags === 'string' ? info.tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        autoManagement: typeof info.auto_tmm === 'boolean' ? info.auto_tmm : undefined,
+        sequentialDownload: typeof info.seq_dl === 'boolean' ? info.seq_dl : undefined,
+        firstLastPiecePriority: typeof info.f_l_piece_prio === 'boolean' ? info.f_l_piece_prio : undefined,
+        superSeeding: typeof info.super_seeding === 'boolean' ? info.super_seeding : undefined,
 
         // 实际连接数（优先使用 qB 的统计；否则用 seeds+leechers 的可用值）
         connections,
@@ -451,6 +528,142 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   async forceStartBatch(hashes: string[], value: boolean): Promise<void> {
     await apiClient.post('/api/v2/torrents/setForceStart', null, {
       params: { hashes: hashes.join('|') || 'all', value: value.toString() }
+    })
+  }
+
+  async queueMoveTop(hashes: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/topPrio', null, {
+      params: { hashes: hashes.join('|') || 'all' }
+    })
+  }
+
+  async queueMoveUp(hashes: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/increasePrio', null, {
+      params: { hashes: hashes.join('|') || 'all' }
+    })
+  }
+
+  async queueMoveDown(hashes: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/decreasePrio', null, {
+      params: { hashes: hashes.join('|') || 'all' }
+    })
+  }
+
+  async queueMoveBottom(hashes: string[]): Promise<void> {
+    await apiClient.post('/api/v2/torrents/bottomPrio', null, {
+      params: { hashes: hashes.join('|') || 'all' }
+    })
+  }
+
+  async setAutoManagement(hashes: string[], enable: boolean): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setAutoManagement', null, {
+      params: { hashes: hashes.join('|') || 'all', enable: enable.toString() }
+    })
+  }
+
+  private async resolveTorrentsInfoFlags(hashes: string[]): Promise<QBTorrentInfo[]> {
+    const hashesParam = hashes.join('|') || 'all'
+    const { data } = await apiClient.get<QBTorrentInfo[]>('/api/v2/torrents/info', { params: { hashes: hashesParam } })
+    return Array.isArray(data) ? data : []
+  }
+
+  async setSequentialDownload(hashes: string[], enable: boolean): Promise<void> {
+    const info = await this.resolveTorrentsInfoFlags(hashes)
+    const toToggle = info
+      .filter(t => typeof t.hash === 'string' && Boolean(t.seq_dl) !== enable)
+      .map(t => t.hash)
+      .filter(Boolean)
+
+    if (toToggle.length === 0) return
+
+    await apiClient.post('/api/v2/torrents/toggleSequentialDownload', null, {
+      params: { hashes: toToggle.join('|') }
+    })
+  }
+
+  async setFirstLastPiecePriority(hashes: string[], enable: boolean): Promise<void> {
+    const info = await this.resolveTorrentsInfoFlags(hashes)
+    const toToggle = info
+      .filter(t => typeof t.hash === 'string' && Boolean(t.f_l_piece_prio) !== enable)
+      .map(t => t.hash)
+      .filter(Boolean)
+
+    if (toToggle.length === 0) return
+
+    await apiClient.post('/api/v2/torrents/toggleFirstLastPiecePrio', null, {
+      params: { hashes: toToggle.join('|') }
+    })
+  }
+
+  async setSuperSeeding(hashes: string[], value: boolean): Promise<void> {
+    await apiClient.post('/api/v2/torrents/setSuperSeeding', null, {
+      params: { hashes: hashes.join('|') || 'all', value: value.toString() }
+    })
+  }
+
+  async addTrackers(hash: string, urls: string[]): Promise<void> {
+    const sanitized = urls.map(u => u.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+
+    const params = new URLSearchParams()
+    params.append('hash', hash)
+    params.append('urls', sanitized.join('\n'))
+
+    await apiClient.post('/api/v2/torrents/addTrackers', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async editTracker(hash: string, origUrl: string, newUrl: string): Promise<void> {
+    const from = String(origUrl ?? '').trim()
+    const to = String(newUrl ?? '').trim()
+    if (!from || !to || from === to) return
+
+    const params = new URLSearchParams()
+    params.append('hash', hash)
+    params.append('origUrl', from)
+    params.append('newUrl', to)
+
+    await apiClient.post('/api/v2/torrents/editTracker', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async removeTrackers(hash: string, urls: string[]): Promise<void> {
+    const sanitized = urls.map(u => u.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+
+    const params = new URLSearchParams()
+    params.append('hash', hash)
+    params.append('urls', sanitized.join('|'))
+
+    await apiClient.post('/api/v2/torrents/removeTrackers', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async addPeers(hashes: string[], peers: string[]): Promise<void> {
+    const sanitized = peers.map(p => p.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+
+    const params = new URLSearchParams()
+    params.append('hashes', hashes.join('|') || 'all')
+    params.append('peers', sanitized.join('|'))
+
+    await apiClient.post('/api/v2/torrents/addPeers', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async banPeers(peers: string[]): Promise<void> {
+    const sanitized = peers.map(p => p.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+
+    const params = new URLSearchParams()
+    params.append('peers', sanitized.join('|'))
+
+    await apiClient.post('/api/v2/transfer/banPeers', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
     })
   }
 
@@ -892,11 +1105,266 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
     })
   }
 
+  private mapLogLevel(type: unknown): AppLogEntry['level'] {
+    const num = typeof type === 'number' ? type : Number.parseInt(String(type), 10)
+    if (!Number.isFinite(num)) return 'normal'
+    // type 是 bitmask：CRITICAL(8) > WARNING(4) > INFO(2) > NORMAL(1)
+    if ((num & 8) === 8) return 'critical'
+    if ((num & 4) === 4) return 'warning'
+    if ((num & 2) === 2) return 'info'
+    return 'normal'
+  }
+
+  async getAppLog(params?: {
+    normal?: boolean
+    info?: boolean
+    warning?: boolean
+    critical?: boolean
+    lastKnownId?: number
+  }): Promise<AppLogEntry[]> {
+    const { data } = await apiClient.get<Array<{ id: number; message: string; timestamp: number; type: number }>>('/api/v2/log/main', {
+      params: {
+        normal: params?.normal ?? true,
+        info: params?.info ?? true,
+        warning: params?.warning ?? true,
+        critical: params?.critical ?? true,
+        last_known_id: params?.lastKnownId ?? -1,
+      }
+    })
+
+    const items = Array.isArray(data) ? data : []
+    return items.map(item => ({
+      id: typeof item.id === 'number' && Number.isFinite(item.id) ? item.id : 0,
+      timestamp: typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) ? item.timestamp : 0,
+      level: this.mapLogLevel(item.type),
+      message: String(item.message ?? ''),
+    }))
+  }
+
+  async getPeerLog(params?: { lastKnownId?: number }): Promise<PeerLogEntry[]> {
+    const { data } = await apiClient.get<Array<{ id: number; ip: string; timestamp: number; blocked: boolean; reason: string }>>('/api/v2/log/peers', {
+      params: { last_known_id: params?.lastKnownId ?? -1 }
+    })
+
+    const items = Array.isArray(data) ? data : []
+    return items.map(item => ({
+      id: typeof item.id === 'number' && Number.isFinite(item.id) ? item.id : 0,
+      ip: String(item.ip ?? ''),
+      timestamp: typeof item.timestamp === 'number' && Number.isFinite(item.timestamp) ? item.timestamp : 0,
+      blocked: Boolean(item.blocked),
+      reason: String(item.reason ?? ''),
+    }))
+  }
+
+  async rssAddFolder(path: string): Promise<void> {
+    const normalized = String(path ?? '').trim()
+    if (!normalized) return
+    const params = new URLSearchParams()
+    params.append('path', normalized)
+    await apiClient.post('/api/v2/rss/addFolder', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssAddFeed(url: string, path?: string): Promise<void> {
+    const normalizedUrl = String(url ?? '').trim()
+    if (!normalizedUrl) return
+    const params = new URLSearchParams()
+    params.append('url', normalizedUrl)
+    const normalizedPath = String(path ?? '').trim()
+    if (normalizedPath) params.append('path', normalizedPath)
+    await apiClient.post('/api/v2/rss/addFeed', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssRemoveItem(path: string): Promise<void> {
+    const normalized = String(path ?? '').trim()
+    if (!normalized) return
+    const params = new URLSearchParams()
+    params.append('path', normalized)
+    await apiClient.post('/api/v2/rss/removeItem', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssMoveItem(itemPath: string, destPath: string): Promise<void> {
+    const src = String(itemPath ?? '').trim()
+    const dest = String(destPath ?? '').trim()
+    if (!src || !dest) return
+    const params = new URLSearchParams()
+    params.append('itemPath', src)
+    params.append('destPath', dest)
+    await apiClient.post('/api/v2/rss/moveItem', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssGetItems(withData?: boolean): Promise<RssItems> {
+    const { data } = await apiClient.get<RssItems>('/api/v2/rss/items', {
+      params: withData !== undefined ? { withData } : undefined
+    })
+    return (data && typeof data === 'object') ? data : {}
+  }
+
+  async rssMarkAsRead(itemPath: string, articleId?: string): Promise<void> {
+    const path = String(itemPath ?? '').trim()
+    if (!path) return
+    const params = new URLSearchParams()
+    params.append('itemPath', path)
+    const article = String(articleId ?? '').trim()
+    if (article) params.append('articleId', article)
+    await apiClient.post('/api/v2/rss/markAsRead', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssRefreshItem(itemPath: string): Promise<void> {
+    const path = String(itemPath ?? '').trim()
+    if (!path) return
+    const params = new URLSearchParams()
+    params.append('itemPath', path)
+    await apiClient.post('/api/v2/rss/refreshItem', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssSetRule(ruleName: string, ruleDef: RssRuleDefinition): Promise<void> {
+    const name = String(ruleName ?? '').trim()
+    if (!name) return
+    const params = new URLSearchParams()
+    params.append('ruleName', name)
+    params.append('ruleDef', JSON.stringify(ruleDef ?? {}))
+    await apiClient.post('/api/v2/rss/setRule', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssRenameRule(ruleName: string, newRuleName: string): Promise<void> {
+    const from = String(ruleName ?? '').trim()
+    const to = String(newRuleName ?? '').trim()
+    if (!from || !to || from === to) return
+    const params = new URLSearchParams()
+    params.append('ruleName', from)
+    params.append('newRuleName', to)
+    await apiClient.post('/api/v2/rss/renameRule', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssRemoveRule(ruleName: string): Promise<void> {
+    const name = String(ruleName ?? '').trim()
+    if (!name) return
+    const params = new URLSearchParams()
+    params.append('ruleName', name)
+    await apiClient.post('/api/v2/rss/removeRule', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async rssGetRules(): Promise<Record<string, RssRuleDefinition>> {
+    const { data } = await apiClient.get<Record<string, RssRuleDefinition>>('/api/v2/rss/rules')
+    return (data && typeof data === 'object') ? data : {}
+  }
+
+  async rssMatchingArticles(ruleName: string): Promise<Record<string, string[]>> {
+    const name = String(ruleName ?? '').trim()
+    if (!name) return {}
+    const { data } = await apiClient.get<Record<string, string[]>>('/api/v2/rss/matchingArticles', { params: { ruleName: name } })
+    return (data && typeof data === 'object') ? data : {}
+  }
+
+  async searchStart(params: { pattern: string; plugins?: string; category?: string }): Promise<number> {
+    const pattern = String(params?.pattern ?? '').trim()
+    if (!pattern) throw new Error('pattern is required')
+
+    const { data } = await apiClient.get<{ id: number }>('/api/v2/search/start', {
+      params: {
+        pattern,
+        plugins: params?.plugins ?? 'enabled',
+        category: params?.category ?? 'all',
+      }
+    })
+
+    const id = (data as any)?.id
+    if (typeof id === 'number' && Number.isFinite(id)) return id
+    const parsed = Number(id)
+    if (Number.isFinite(parsed)) return parsed
+    throw new Error('Invalid search job id')
+  }
+
+  async searchStop(id: number): Promise<void> {
+    await apiClient.post('/api/v2/search/stop', null, { params: { id } })
+  }
+
+  async searchDelete(id: number): Promise<void> {
+    await apiClient.post('/api/v2/search/delete', null, { params: { id } })
+  }
+
+  async searchStatus(id?: number): Promise<SearchJobStatus[]> {
+    const { data } = await apiClient.get<SearchJobStatus[]>('/api/v2/search/status', {
+      params: id !== undefined ? { id } : undefined
+    })
+    return Array.isArray(data) ? data : []
+  }
+
+  async searchResults(params: { id: number; limit?: number; offset?: number }): Promise<SearchResults> {
+    const { data } = await apiClient.get<SearchResults>('/api/v2/search/results', {
+      params: {
+        id: params.id,
+        ...(params.limit !== undefined ? { limit: params.limit } : {}),
+        ...(params.offset !== undefined ? { offset: params.offset } : {}),
+      }
+    })
+    return data
+  }
+
+  async searchPlugins(): Promise<SearchPlugin[]> {
+    const { data } = await apiClient.get<SearchPlugin[]>('/api/v2/search/plugins')
+    return Array.isArray(data) ? data : []
+  }
+
+  async searchInstallPlugin(sources: string[]): Promise<void> {
+    const sanitized = sources.map(s => s.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+    const params = new URLSearchParams()
+    params.append('sources', sanitized.join('|'))
+    await apiClient.post('/api/v2/search/installPlugin', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async searchUninstallPlugin(names: string[]): Promise<void> {
+    const sanitized = names.map(s => s.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+    const params = new URLSearchParams()
+    params.append('names', sanitized.join('|'))
+    await apiClient.post('/api/v2/search/uninstallPlugin', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async searchEnablePlugin(names: string[], enable: boolean): Promise<void> {
+    const sanitized = names.map(s => s.trim()).filter(Boolean)
+    if (sanitized.length === 0) return
+    const params = new URLSearchParams()
+    params.append('names', sanitized.join('|'))
+    params.append('enable', enable.toString())
+    await apiClient.post('/api/v2/search/enablePlugin', params, {
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+    })
+  }
+
+  async searchUpdatePlugins(): Promise<void> {
+    await apiClient.post('/api/v2/search/updatePlugins')
+  }
+
   getCapabilities(): BackendCapabilities {
     return {
       // 队列相关
       hasSeparateSeedQueue: false, // qB 的队列是全局的（queueing_enabled 同时控制下载/做种）
       hasStalledQueue: false,
+      hasTorrentQueue: true,
 
       // 协议相关
       hasLSD: true,                 // 支持 LSD（本地服务发现）
@@ -913,6 +1381,19 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
       hasIncompleteDir: true,       // 支持 temp_path
       hasCreateSubfolder: true,     // 支持 create_subfolder_enabled
       hasIncompleteFilesSuffix: true, // 支持 incomplete_files_ext
+
+      hasTrackerManagement: true,
+      hasPeerManagement: true,
+      hasBandwidthPriority: false,
+      hasTorrentAdvancedSwitches: true,
+      hasAutoManagement: true,
+      hasSequentialDownload: true,
+      hasFirstLastPiecePriority: true,
+      hasSuperSeeding: true,
+
+      hasLogs: true,
+      hasRss: this.toolsCapabilities.hasRss,
+      hasSearch: this.toolsCapabilities.hasSearch,
 
       // 高级功能
       hasProxy: true,               // 支持代理设置

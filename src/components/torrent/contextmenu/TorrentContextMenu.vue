@@ -8,6 +8,7 @@ interface Props {
   y: number
   hashes: string[]
   canSetCategory?: boolean
+  canQueue?: boolean
 }
 
 const props = defineProps<Props>()
@@ -18,7 +19,7 @@ const emit = defineEmits<{
 
 // 菜单尺寸常量
 const MENU_WIDTH = 200
-const MENU_HEIGHT = 400
+const MENU_HEIGHT = 520
 const PADDING = 8
 
 let deferredBindTimer: ReturnType<typeof setTimeout> | null = null
@@ -61,8 +62,9 @@ const menuPosition = computed(() => {
 const menuItems = computed<MenuItem[]>(() => {
   const isMulti = props.hashes.length > 1
   const canSetCategory = props.canSetCategory !== false
+  const canQueue = props.canQueue === true
 
-  return [
+  const items: MenuItem[] = [
     {
       type: 'action' as const,
       id: 'pause',
@@ -99,6 +101,43 @@ const menuItems = computed<MenuItem[]>(() => {
       icon: 'zap',
       action: () => emit('action', 'force-start', props.hashes)
     },
+  ]
+
+  if (canQueue) {
+    items.push(
+      { type: 'divider' as const, id: 'divider-queue' },
+      {
+        type: 'action' as const,
+        id: 'queue-top',
+        label: `置顶${isMulti ? ` (${props.hashes.length})` : ''}`,
+        icon: 'chevrons-up',
+        action: () => emit('action', 'queue-top', props.hashes),
+      },
+      {
+        type: 'action' as const,
+        id: 'queue-up',
+        label: `上移${isMulti ? ` (${props.hashes.length})` : ''}`,
+        icon: 'chevron-up',
+        action: () => emit('action', 'queue-up', props.hashes),
+      },
+      {
+        type: 'action' as const,
+        id: 'queue-down',
+        label: `下移${isMulti ? ` (${props.hashes.length})` : ''}`,
+        icon: 'chevron-down',
+        action: () => emit('action', 'queue-down', props.hashes),
+      },
+      {
+        type: 'action' as const,
+        id: 'queue-bottom',
+        label: `置底${isMulti ? ` (${props.hashes.length})` : ''}`,
+        icon: 'chevrons-down',
+        action: () => emit('action', 'queue-bottom', props.hashes),
+      }
+    )
+  }
+
+  items.push(
     { type: 'divider' as const, id: 'divider-2' },
     {
       type: 'action' as const,
@@ -123,7 +162,9 @@ const menuItems = computed<MenuItem[]>(() => {
       danger: true,
       action: () => emit('action', 'delete', props.hashes)
     },
-  ]
+  )
+
+  return items
 })
 
 /**

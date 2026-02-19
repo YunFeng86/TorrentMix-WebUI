@@ -949,6 +949,170 @@ test('Transmission json-rpc2: deleteTags should remove labels from all torrents'
   }
 })
 
+test('Transmission legacy: queueMove* should map to queue-move-* RPC methods', async () => {
+  const adapter = new TransAdapter()
+  const calls: any[] = []
+
+  try {
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      calls.push(payload)
+      return { data: { result: 'success', arguments: {} } }
+    })
+
+    await adapter.queueMoveTop(['a', 'b'])
+    await adapter.queueMoveUp(['a'])
+    await adapter.queueMoveDown(['x'])
+    await adapter.queueMoveBottom(['z'])
+
+    assert.equal(calls[0]?.method, 'queue-move-top')
+    assert.deepEqual(calls[0]?.arguments?.ids, ['a', 'b'])
+    assert.equal(calls[1]?.method, 'queue-move-up')
+    assert.deepEqual(calls[1]?.arguments?.ids, ['a'])
+    assert.equal(calls[2]?.method, 'queue-move-down')
+    assert.deepEqual(calls[2]?.arguments?.ids, ['x'])
+    assert.equal(calls[3]?.method, 'queue-move-bottom')
+    assert.deepEqual(calls[3]?.arguments?.ids, ['z'])
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('Transmission json-rpc2: queueMove* should map to queue_move_* RPC methods', async () => {
+  const adapter = new TransAdapter({ rpcSemver: '6.0.0' })
+  const calls: any[] = []
+
+  try {
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      calls.push(payload)
+      return { status: 204, data: null }
+    })
+
+    await adapter.queueMoveTop(['a', 'b'])
+    await adapter.queueMoveUp(['a'])
+    await adapter.queueMoveDown(['x'])
+    await adapter.queueMoveBottom(['z'])
+
+    assert.equal(calls[0]?.method, 'queue_move_top')
+    assert.deepEqual(calls[0]?.params?.ids, ['a', 'b'])
+    assert.equal(calls[1]?.method, 'queue_move_up')
+    assert.deepEqual(calls[1]?.params?.ids, ['a'])
+    assert.equal(calls[2]?.method, 'queue_move_down')
+    assert.deepEqual(calls[2]?.params?.ids, ['x'])
+    assert.equal(calls[3]?.method, 'queue_move_bottom')
+    assert.deepEqual(calls[3]?.params?.ids, ['z'])
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('Transmission legacy: addTrackers/removeTrackers/editTracker should use torrent-set trackerAdd/trackerRemove/trackerReplace', async () => {
+  const adapter = new TransAdapter()
+
+  const calls: any[] = []
+
+  try {
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      calls.push(payload)
+
+      if (payload.method === 'torrent-get') {
+        assert.deepEqual(payload.arguments?.fields, ['hashString', 'trackers'])
+        return {
+          data: {
+            result: 'success',
+            arguments: {
+              torrents: [
+                {
+                  hashString: 'h1',
+                  trackers: [
+                    { id: 7, announce: 'udp://a', tier: 0 },
+                    { id: 8, announce: 'udp://b', tier: 0 },
+                  ],
+                },
+              ],
+            },
+          },
+        }
+      }
+
+      if (payload.method === 'torrent-set') {
+        return { data: { result: 'success', arguments: {} } }
+      }
+
+      throw new Error(`Unexpected method: ${payload.method}`)
+    })
+
+    await adapter.addTrackers('h1', [' udp://x ', '', 'udp://y'])
+    await adapter.removeTrackers('h1', ['udp://b', 'udp://missing'])
+    await adapter.editTracker('h1', 'udp://a', 'udp://new')
+
+    const add = calls.find(c => c.method === 'torrent-set' && Array.isArray(c.arguments?.trackerAdd))
+    assert.deepEqual(add?.arguments, { ids: ['h1'], trackerAdd: ['udp://x', 'udp://y'] })
+
+    const remove = calls.find(c => c.method === 'torrent-set' && Array.isArray(c.arguments?.trackerRemove))
+    assert.deepEqual(remove?.arguments, { ids: ['h1'], trackerRemove: [8] })
+
+    const replace = calls.find(c => c.method === 'torrent-set' && Array.isArray(c.arguments?.trackerReplace))
+    assert.deepEqual(replace?.arguments, { ids: ['h1'], trackerReplace: [7, 'udp://new'] })
+  } finally {
+    mock.restoreAll()
+  }
+})
+
+test('Transmission json-rpc2: addTrackers/removeTrackers/editTracker should use torrent_set tracker_add/tracker_remove/tracker_replace', async () => {
+  const adapter = new TransAdapter({ rpcSemver: '6.0.0' })
+
+  const calls: any[] = []
+
+  try {
+    mock.method(transClient as any, 'post', async (_url: string, payload: any) => {
+      calls.push(payload)
+
+      if (payload.method === 'torrent_get') {
+        assert.deepEqual(payload.params?.fields, ['hash_string', 'trackers'])
+        return {
+          status: 200,
+          data: {
+            jsonrpc: '2.0',
+            id: payload.id,
+            result: {
+              torrents: [
+                {
+                  hash_string: 'h1',
+                  trackers: [
+                    { id: 7, announce: 'udp://a', tier: 0 },
+                    { id: 8, announce: 'udp://b', tier: 0 },
+                  ],
+                },
+              ],
+            },
+          },
+        }
+      }
+
+      if (payload.method === 'torrent_set') {
+        return { status: 204, data: null }
+      }
+
+      throw new Error(`Unexpected method: ${payload.method}`)
+    })
+
+    await adapter.addTrackers('h1', [' udp://x ', '', 'udp://y'])
+    await adapter.removeTrackers('h1', ['udp://b', 'udp://missing'])
+    await adapter.editTracker('h1', 'udp://a', 'udp://new')
+
+    const add = calls.find(c => c.method === 'torrent_set' && Array.isArray(c.params?.tracker_add))
+    assert.deepEqual(add?.params, { ids: ['h1'], tracker_add: ['udp://x', 'udp://y'] })
+
+    const remove = calls.find(c => c.method === 'torrent_set' && Array.isArray(c.params?.tracker_remove))
+    assert.deepEqual(remove?.params, { ids: ['h1'], tracker_remove: [8] })
+
+    const replace = calls.find(c => c.method === 'torrent_set' && Array.isArray(c.params?.tracker_replace))
+    assert.deepEqual(replace?.params, { ids: ['h1'], tracker_replace: [7, 'udp://new'] })
+  } finally {
+    mock.restoreAll()
+  }
+})
+
 test('Transmission json-rpc2: addTorrent should encode large .torrent metainfo without stack overflow', async () => {
   const adapter = new TransAdapter({ rpcSemver: '6.0.0' })
 

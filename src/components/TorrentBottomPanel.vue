@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onUnmounted } from 'vue'
 import { useBackendStore } from '@/store/backend'
 import type { UnifiedTorrentDetail, UnifiedTorrent, TorrentFile } from '@/adapter/types'
+import type { BackendCapabilities, TorrentBandwidthPriority } from '@/adapter/interface'
 import Icon from '@/components/Icon.vue'
 import SafeText from '@/components/SafeText.vue'
 import { formatBytes, formatSpeed } from '@/utils/format'
@@ -27,6 +28,7 @@ const props = defineProps<Props>()
 const emit = defineEmits<Emits>()
 
 const backendStore = useBackendStore()
+const capabilities = computed<BackendCapabilities>(() => backendStore.capabilities)
 
 // 详情数据
 const detail = ref<UnifiedTorrentDetail | null>(null)
@@ -36,6 +38,50 @@ const mutating = ref(false)
 
 // 当前 Tab
 const activeTab = ref<'overview' | 'files' | 'trackers' | 'peers'>('overview')
+
+const canTorrentAdvancedSwitches = computed(() => capabilities.value.hasTorrentAdvancedSwitches === true)
+const canAutoManagement = computed(() =>
+  capabilities.value.hasAutoManagement === true && typeof (backendStore.adapter as any)?.setAutoManagement === 'function'
+)
+const canSequentialDownload = computed(() =>
+  capabilities.value.hasSequentialDownload === true && typeof (backendStore.adapter as any)?.setSequentialDownload === 'function'
+)
+const canFirstLastPiecePriority = computed(() =>
+  capabilities.value.hasFirstLastPiecePriority === true && typeof (backendStore.adapter as any)?.setFirstLastPiecePriority === 'function'
+)
+const canSuperSeeding = computed(() =>
+  capabilities.value.hasSuperSeeding === true && typeof (backendStore.adapter as any)?.setSuperSeeding === 'function'
+)
+
+const canBandwidthPriority = computed(() =>
+  capabilities.value.hasBandwidthPriority === true && typeof (backendStore.adapter as any)?.setBandwidthPriority === 'function'
+)
+
+const canTrackerManagement = computed(() => capabilities.value.hasTrackerManagement === true)
+const canPeerManagement = computed(() => capabilities.value.hasPeerManagement === true)
+
+const canRenameFile = computed(() => {
+  const fn = (backendStore.adapter as any)?.renameFile
+  if (typeof fn !== 'function') return false
+  if (backendStore.isQbit) {
+    const features = backendStore.version?.features
+    if (features && !features.hasFileRename) return false
+  }
+  return true
+})
+
+const canRenameFolder = computed(() => {
+  const fn = (backendStore.adapter as any)?.renameFolder
+  if (typeof fn !== 'function') return false
+  if (backendStore.isQbit) {
+    const features = backendStore.version?.features
+    if (features && !features.hasFileRename) return false
+  }
+  return true
+})
+
+const canMoveFile = computed(() => backendStore.isQbit && canRenameFile.value)
+const canMoveFolder = computed(() => backendStore.isQbit && canRenameFolder.value)
 
 // 使用拖拽 composable（核心性能优化）
 const {
@@ -126,6 +172,11 @@ async function fetchDetail() {
 
 // 监听种子变化重新获取详情
 watch(() => props.torrent?.id, () => {
+  clearTrackerSelection()
+  clearPeerSelection()
+  showLimitDialog.value = false
+  fileContextMenuState.value.show = false
+  fileContextMenuState.value.node = null
   if (props.visible && props.torrent) {
     fetchDetail()
   }
@@ -148,6 +199,8 @@ function handleAction(action: string) {
 
 const canRenameTorrent = computed(() => {
   if (!backendStore.isQbit) return false
+  const features = backendStore.version?.features
+  if (features && !features.hasTorrentRename) return false
   const fn = (backendStore.adapter as any)?.renameTorrent
   return typeof fn === 'function'
 })
@@ -164,6 +217,7 @@ async function handleRenameTorrent() {
   if (!trimmed || trimmed === current) return
 
   mutating.value = true
+  backendStore.beginMutation()
   try {
     await fn.call(backendStore.adapter, props.torrent.id, trimmed)
     emit('refresh')
@@ -172,6 +226,7 @@ async function handleRenameTorrent() {
     console.error('[TorrentBottomPanel] Rename torrent failed:', err)
     alert(err instanceof Error ? err.message : '重命名失败')
   } finally {
+    backendStore.endMutation()
     mutating.value = false
   }
 }
@@ -186,6 +241,7 @@ async function handleSetLocation() {
   if (!trimmed || trimmed === current) return
 
   mutating.value = true
+  backendStore.beginMutation()
   try {
     await backendStore.adapter.setLocation(props.torrent.id, trimmed)
     emit('refresh')
@@ -194,6 +250,7 @@ async function handleSetLocation() {
     console.error('[TorrentBottomPanel] Set location failed:', err)
     alert(err instanceof Error ? err.message : '移动位置失败')
   } finally {
+    backendStore.endMutation()
     mutating.value = false
   }
 }
@@ -291,6 +348,318 @@ const priorityMap: Record<string, { text: string; class: string }> = {
   do_not_download: { text: '跳过', class: 'text-gray-400 line-through' }
 }
 
+const selectedTrackerUrls = ref<Set<string>>(new Set())
+function toggleTrackerSelection(url: string) {
+  const next = new Set(selectedTrackerUrls.value)
+  if (next.has(url)) next.delete(url)
+  else next.add(url)
+  selectedTrackerUrls.value = next
+}
+
+function clearTrackerSelection() {
+  selectedTrackerUrls.value = new Set()
+}
+
+function peerKey(peer: { ip: string; port: number }) {
+  return `${peer.ip}:${peer.port}`
+}
+
+const selectedPeers = ref<Set<string>>(new Set())
+function togglePeerSelection(peer: { ip: string; port: number }) {
+  const key = peerKey(peer)
+  const next = new Set(selectedPeers.value)
+  if (next.has(key)) next.delete(key)
+  else next.add(key)
+  selectedPeers.value = next
+}
+
+function clearPeerSelection() {
+  selectedPeers.value = new Set()
+}
+
+const showLimitDialog = ref(false)
+const dlLimitInput = ref('')
+const upLimitInput = ref('')
+
+const speedBytes = ref(1024)
+const speedUnitLabel = computed(() => (speedBytes.value === 1000 ? 'kB/s' : 'KiB/s'))
+
+async function ensureSpeedBytes() {
+  if (!backendStore.adapter) return
+  if (!backendStore.isTrans) {
+    speedBytes.value = 1024
+    return
+  }
+
+  try {
+    const settings = await backendStore.adapter.getTransferSettings()
+    const sb = settings.speedBytes
+    if (typeof sb === 'number' && Number.isFinite(sb) && sb > 0) {
+      speedBytes.value = sb
+    } else {
+      speedBytes.value = 1024
+    }
+  } catch (err) {
+    console.warn('[TorrentBottomPanel] Failed to load speedBytes, fallback 1024:', err)
+    speedBytes.value = 1024
+  }
+}
+
+async function openLimitDialog() {
+  if (!detail.value) return
+  await ensureSpeedBytes()
+
+  const multiplier = speedBytes.value > 0 ? speedBytes.value : 1024
+  dlLimitInput.value = detail.value.dlLimit > 0 ? String(Math.round(detail.value.dlLimit / multiplier)) : ''
+  upLimitInput.value = detail.value.upLimit > 0 ? String(Math.round(detail.value.upLimit / multiplier)) : ''
+  showLimitDialog.value = true
+}
+
+function parseKbLimit(raw: string): number {
+  const trimmed = raw.trim()
+  if (!trimmed) return -1
+  const num = Number(trimmed)
+  if (!Number.isFinite(num) || num < 0) throw new Error(`限速请输入非负数字（${speedUnitLabel.value}）`)
+  if (num <= 0) return -1
+  const multiplier = speedBytes.value > 0 ? speedBytes.value : 1024
+  return Math.round(num * multiplier)
+}
+
+async function saveLimits() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+
+  let dlLimit: number
+  let upLimit: number
+
+  try {
+    dlLimit = parseKbLimit(dlLimitInput.value)
+    upLimit = parseKbLimit(upLimitInput.value)
+  } catch (err) {
+    alert(err instanceof Error ? err.message : '限速值无效')
+    return
+  }
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await Promise.all([
+      backendStore.adapter.setDownloadLimit(props.torrent.id, dlLimit),
+      backendStore.adapter.setUploadLimit(props.torrent.id, upLimit),
+    ])
+    showLimitDialog.value = false
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to save limits:', err)
+    alert(err instanceof Error ? err.message : '保存限速失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+function parseBandwidthPriority(raw: string): TorrentBandwidthPriority | null {
+  if (raw === 'low' || raw === 'normal' || raw === 'high') return raw
+  return null
+}
+
+async function handleBandwidthPriorityChange(raw: string) {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!canBandwidthPriority.value) return
+
+  const next = parseBandwidthPriority(raw)
+  if (!next) return
+  if (detail.value?.bandwidthPriority === next) return
+
+  const fn = (backendStore.adapter as any)?.setBandwidthPriority
+  if (typeof fn !== 'function') return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await fn.call(backendStore.adapter, [props.torrent.id], next)
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to set bandwidth priority:', err)
+    alert(err instanceof Error ? err.message : '设置带宽优先级失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+type TorrentAdvancedSwitch = 'autoManagement' | 'sequentialDownload' | 'firstLastPiecePriority' | 'superSeeding'
+async function handleAdvancedSwitch(kind: TorrentAdvancedSwitch, enable: boolean) {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!canTorrentAdvancedSwitches.value) return
+
+  const fnMap: Record<TorrentAdvancedSwitch, unknown> = {
+    autoManagement: (backendStore.adapter as any)?.setAutoManagement,
+    sequentialDownload: (backendStore.adapter as any)?.setSequentialDownload,
+    firstLastPiecePriority: (backendStore.adapter as any)?.setFirstLastPiecePriority,
+    superSeeding: (backendStore.adapter as any)?.setSuperSeeding,
+  }
+  const fn = fnMap[kind]
+  if (typeof fn !== 'function') return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await fn.call(backendStore.adapter, [props.torrent.id], enable)
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to set advanced switch:', err)
+    alert(err instanceof Error ? err.message : '设置高级开关失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+async function handleAddTrackers() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!canTrackerManagement.value) return
+
+  const input = prompt('请输入 Tracker URL（多条可用换行分隔）：', '')
+  if (input === null) return
+  const urls = input
+    .split(/[\n,，]+/g)
+    .map(s => s.trim())
+    .filter(Boolean)
+  if (urls.length === 0) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await backendStore.adapter.addTrackers(props.torrent.id, urls)
+    clearTrackerSelection()
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to add trackers:', err)
+    alert(err instanceof Error ? err.message : '添加 Tracker 失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+async function handleEditSelectedTracker() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!canTrackerManagement.value) return
+
+  const urls = Array.from(selectedTrackerUrls.value)
+  if (urls.length !== 1) {
+    alert('请先选择 1 个 Tracker 再编辑。')
+    return
+  }
+
+  const origUrl = urls[0]!
+  const next = prompt('请输入新的 Tracker URL：', origUrl)
+  if (next === null) return
+  const trimmed = next.trim()
+  if (!trimmed || trimmed === origUrl) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await backendStore.adapter.editTracker(props.torrent.id, origUrl, trimmed)
+    clearTrackerSelection()
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to edit tracker:', err)
+    alert(err instanceof Error ? err.message : '编辑 Tracker 失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+async function handleRemoveSelectedTrackers() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!canTrackerManagement.value) return
+
+  const urls = Array.from(selectedTrackerUrls.value)
+  if (urls.length === 0) return
+  if (!confirm(`确定移除已选的 ${urls.length} 个 Tracker 吗？`)) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await backendStore.adapter.removeTrackers(props.torrent.id, urls)
+    clearTrackerSelection()
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to remove trackers:', err)
+    alert(err instanceof Error ? err.message : '移除 Tracker 失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+async function handleAddPeers() {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!canPeerManagement.value) return
+
+  const fn = (backendStore.adapter as any)?.addPeers
+  if (typeof fn !== 'function') return
+
+  const input = prompt('请输入 Peer 地址（ip:port，多条可用换行分隔）：', '')
+  if (input === null) return
+  const peers = input
+    .split(/[\n,，]+/g)
+    .map(s => s.trim())
+    .filter(Boolean)
+  if (peers.length === 0) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await fn.call(backendStore.adapter, [props.torrent.id], peers)
+    clearPeerSelection()
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to add peers:', err)
+    alert(err instanceof Error ? err.message : '添加 Peers 失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+async function handleBanSelectedPeers() {
+  if (!backendStore.adapter) return
+  if (!canPeerManagement.value) return
+
+  const fn = (backendStore.adapter as any)?.banPeers
+  if (typeof fn !== 'function') return
+
+  const peers = Array.from(selectedPeers.value)
+  if (peers.length === 0) return
+  if (!confirm(`确定封禁已选的 ${peers.length} 个 Peer 吗？\n\n注意：封禁是全局生效的。`)) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await fn.call(backendStore.adapter, peers)
+    clearPeerSelection()
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Failed to ban peers:', err)
+    alert(err instanceof Error ? err.message : '封禁 Peers 失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
 // 文件树节点类型
 interface FileTreeNode {
   id?: number
@@ -304,6 +673,151 @@ interface FileTreeNode {
   expanded?: boolean
   level: number
 }
+
+type FileContextMenuState = {
+  show: boolean
+  x: number
+  y: number
+  node: FileTreeNode | null
+}
+
+const fileContextMenuState = ref<FileContextMenuState>({
+  show: false,
+  x: 0,
+  y: 0,
+  node: null,
+})
+
+const FILE_MENU_WIDTH = 200
+const FILE_MENU_PADDING = 8
+
+type FileMenuItem = {
+  id: string
+  label: string
+  icon: string
+  disabled?: boolean
+  action: () => void
+}
+
+const fileMenuItems = computed<FileMenuItem[]>(() => {
+  const node = fileContextMenuState.value.node
+  if (!node) return []
+
+  const isFile = node.type === 'file'
+  const canRename = isFile ? canRenameFile.value : canRenameFolder.value
+  const canMove = isFile ? canMoveFile.value : canMoveFolder.value
+
+  const kindText = isFile ? '文件' : '文件夹'
+  const items: FileMenuItem[] = []
+
+  if (canRename) {
+    items.push({
+      id: 'rename',
+      label: `重命名${kindText}`,
+      icon: 'edit-2',
+      disabled: mutating.value,
+      action: () => {
+        closeFileContextMenu()
+        void handleRenamePath(node)
+      },
+    })
+  }
+
+  if (canMove) {
+    items.push({
+      id: 'move',
+      label: `移动${kindText}`,
+      icon: 'folder-input',
+      disabled: mutating.value,
+      action: () => {
+        closeFileContextMenu()
+        void handleMovePath(node)
+      },
+    })
+  }
+
+  return items
+})
+
+const fileMenuPosition = computed(() => {
+  let left = fileContextMenuState.value.x + FILE_MENU_PADDING
+  let top = fileContextMenuState.value.y + FILE_MENU_PADDING
+
+  const estimatedHeight = Math.max(1, fileMenuItems.value.length) * 40 + 12
+
+  // 右边界检测
+  if (left + FILE_MENU_WIDTH > window.innerWidth) {
+    left = window.innerWidth - FILE_MENU_WIDTH - FILE_MENU_PADDING
+  }
+
+  // 下边界检测
+  if (top + estimatedHeight > window.innerHeight) {
+    top = window.innerHeight - estimatedHeight - FILE_MENU_PADDING
+  }
+
+  return { left, top }
+})
+
+function closeFileContextMenu() {
+  fileContextMenuState.value.show = false
+  fileContextMenuState.value.node = null
+}
+
+function openFileContextMenu(e: MouseEvent, node: FileTreeNode) {
+  e.preventDefault()
+  e.stopPropagation()
+
+  const canRename = node.type === 'file' ? canRenameFile.value : canRenameFolder.value
+  const canMove = node.type === 'file' ? canMoveFile.value : canMoveFolder.value
+  if (!canRename && !canMove) return
+
+  fileContextMenuState.value = {
+    show: true,
+    x: e.clientX,
+    y: e.clientY,
+    node
+  }
+}
+
+let deferredFileMenuBindTimer: ReturnType<typeof setTimeout> | null = null
+
+function handleFileMenuKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') {
+    closeFileContextMenu()
+  }
+}
+
+watch(() => fileContextMenuState.value.show, (show) => {
+  if (show) {
+    if (deferredFileMenuBindTimer) {
+      clearTimeout(deferredFileMenuBindTimer)
+      deferredFileMenuBindTimer = null
+    }
+
+    // 延迟添加监听器，避免立即触发 clickOutside
+    deferredFileMenuBindTimer = setTimeout(() => {
+      if (!fileContextMenuState.value.show) return
+      document.addEventListener('click', closeFileContextMenu)
+      document.addEventListener('keydown', handleFileMenuKeydown)
+    }, 0)
+  } else {
+    if (deferredFileMenuBindTimer) {
+      clearTimeout(deferredFileMenuBindTimer)
+      deferredFileMenuBindTimer = null
+    }
+    document.removeEventListener('click', closeFileContextMenu)
+    document.removeEventListener('keydown', handleFileMenuKeydown)
+  }
+})
+
+onUnmounted(() => {
+  if (deferredFileMenuBindTimer) {
+    clearTimeout(deferredFileMenuBindTimer)
+    deferredFileMenuBindTimer = null
+  }
+  document.removeEventListener('click', closeFileContextMenu)
+  document.removeEventListener('keydown', handleFileMenuKeydown)
+})
 
 // 文件夹展开状态管理
 const expandedFolders = ref<Set<string>>(new Set())
@@ -397,6 +911,125 @@ function parsePriority(raw: string): TorrentFile['priority'] | null {
   return null
 }
 
+function normalizeTorrentPath(path: string): string {
+  return String(path ?? '')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+}
+
+function extractBasename(path: string): string {
+  const normalized = normalizeTorrentPath(path)
+  if (!normalized) return ''
+  const parts = normalized.split('/').filter(Boolean)
+  return parts[parts.length - 1] ?? ''
+}
+
+function extractDirname(path: string): string {
+  const normalized = normalizeTorrentPath(path)
+  const idx = normalized.lastIndexOf('/')
+  if (idx === -1) return ''
+  return normalized.slice(0, idx)
+}
+
+function hasUnsafePathSegments(path: string): boolean {
+  const normalized = normalizeTorrentPath(path)
+  if (!normalized) return false
+  return normalized.split('/').some(seg => seg === '.' || seg === '..')
+}
+
+async function handleRenamePath(node: FileTreeNode) {
+  if (!props.torrent?.id || !backendStore.adapter) return
+
+  const isFile = node.type === 'file'
+  const fn = isFile ? (backendStore.adapter as any)?.renameFile : (backendStore.adapter as any)?.renameFolder
+  if (typeof fn !== 'function') return
+
+  const kindText = isFile ? '文件' : '文件夹'
+  const current = normalizeTorrentPath(node.path)
+  const currentName = node.name || extractBasename(current)
+  const nextName = prompt(`请输入新的${kindText}名称：`, currentName)
+  if (nextName === null) return
+
+  const trimmedName = nextName.trim()
+  if (!trimmedName || trimmedName === currentName) return
+  if (/[\\/]/.test(trimmedName)) {
+    alert('重命名仅支持修改名称，不支持输入路径（请勿包含 "/" 或 "\\\\"）')
+    return
+  }
+
+  const dir = extractDirname(current)
+  const newPath = dir ? `${dir}/${trimmedName}` : trimmedName
+  if (!newPath || newPath === current) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await fn.call(backendStore.adapter, props.torrent.id, current, newPath)
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Rename path failed:', err)
+    alert(err instanceof Error ? err.message : '重命名失败')
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
+async function handleMovePath(node: FileTreeNode) {
+  if (!props.torrent?.id || !backendStore.adapter) return
+  if (!backendStore.isQbit) return
+
+  const isFile = node.type === 'file'
+  const fn = isFile ? (backendStore.adapter as any)?.renameFile : (backendStore.adapter as any)?.renameFolder
+  if (typeof fn !== 'function') return
+
+  const kindText = isFile ? '文件' : '文件夹'
+  const current = normalizeTorrentPath(node.path)
+  const basename = extractBasename(current)
+  if (!basename) return
+
+  const currentDir = extractDirname(current)
+  const nextDirRaw = prompt(
+    `请输入目标目录（相对种子根目录），留空表示根目录：`,
+    currentDir
+  )
+  if (nextDirRaw === null) return
+
+  const nextDir = normalizeTorrentPath(nextDirRaw)
+  if (hasUnsafePathSegments(nextDir)) {
+    alert('目标目录不允许包含 "." 或 ".."')
+    return
+  }
+
+  if (node.type === 'folder' && nextDir) {
+    if (nextDir === current || nextDir.startsWith(`${current}/`)) {
+      alert('不能把文件夹移动到自身或其子目录中')
+      return
+    }
+  }
+
+  const newPath = nextDir ? `${nextDir}/${basename}` : basename
+  if (!newPath || newPath === current) return
+
+  mutating.value = true
+  backendStore.beginMutation()
+  try {
+    await fn.call(backendStore.adapter, props.torrent.id, current, newPath)
+    emit('refresh')
+    await fetchDetail()
+  } catch (err) {
+    console.error('[TorrentBottomPanel] Move path failed:', err)
+    alert(err instanceof Error ? err.message : `移动${kindText}失败`)
+  } finally {
+    backendStore.endMutation()
+    mutating.value = false
+  }
+}
+
 async function handlePriorityChange(node: FileTreeNode, raw: string) {
   if (!props.torrent?.id || !backendStore.adapter) return
   if (node.type !== 'file') return
@@ -406,6 +1039,7 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
   if (node.priority === next) return
 
   mutating.value = true
+  backendStore.beginMutation()
   try {
     await backendStore.adapter.setFilePriority(props.torrent.id, [node.id], next)
     await fetchDetail()
@@ -418,6 +1052,7 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
       // ignore
     }
   } finally {
+    backendStore.endMutation()
     mutating.value = false
   }
 }
@@ -461,6 +1096,14 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
               <span>{{ formatBytes(torrent.size) }}</span>
               <span>进度 {{ (torrent.progress * 100).toFixed(1) }}%</span>
               <span class="hidden sm:inline">比率 {{ torrent.ratio.toFixed(2) }}</span>
+              <div
+                v-if="torrent && detail?.partial && detail.hash === torrent.id"
+                class="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-medium"
+                title="部分详情接口不可用（可能被反代/权限拦截），当前显示为降级结果。"
+              >
+                <Icon name="alert-triangle" :size="12" />
+                <span>部分数据</span>
+              </div>
               <div
                 class="hidden sm:inline-flex items-center px-2 py-1 rounded text-xs font-medium"
                 :class="getHealthStatus(torrent).classes"
@@ -551,6 +1194,17 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
           :disabled="mutating"
         >
           <Icon name="folder-open" :size="16" />
+        </button>
+
+        <!-- 单种子限速 -->
+        <button
+          v-if="torrent"
+          @click="openLimitDialog"
+          class="icon-btn"
+          title="单种子限速"
+          :disabled="mutating"
+        >
+          <Icon name="sliders" :size="16" />
         </button>
 
         <!-- 重命名（qB） -->
@@ -685,6 +1339,93 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
               </div>
             </div>
           </div>
+
+          <!-- 限速与优先级 -->
+          <div class="space-y-4">
+            <h4 class="font-semibold text-gray-900 flex items-center gap-2">
+              <Icon name="sliders" :size="16" />
+              限速与优先级
+            </h4>
+            <div class="bg-gray-50 rounded-lg p-4 space-y-3">
+              <div class="flex justify-between">
+                <span class="text-gray-600">下载限速</span>
+                <span class="font-mono font-medium">{{ detail.dlLimit > 0 ? formatSpeed(detail.dlLimit) : '∞' }}</span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-gray-600">上传限速</span>
+                <span class="font-mono font-medium">{{ detail.upLimit > 0 ? formatSpeed(detail.upLimit) : '∞' }}</span>
+              </div>
+
+              <div v-if="canBandwidthPriority" class="flex justify-between items-center gap-4">
+                <span class="text-gray-600">带宽优先级</span>
+                <select
+                  :value="detail.bandwidthPriority || 'normal'"
+                  @click.stop
+                  @change="handleBandwidthPriorityChange(($event.target as HTMLSelectElement).value)"
+                  class="bg-transparent text-sm font-medium focus:outline-none"
+                  :disabled="mutating"
+                >
+                  <option value="low">低</option>
+                  <option value="normal">普通</option>
+                  <option value="high">高</option>
+                </select>
+              </div>
+
+              <div class="flex justify-end">
+                <button @click="openLimitDialog" class="btn text-sm" :disabled="mutating">编辑限速</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 高级开关 -->
+          <div v-if="canTorrentAdvancedSwitches" class="space-y-4">
+            <h4 class="font-semibold text-gray-900 flex items-center gap-2">
+              <Icon name="settings" :size="16" />
+              高级开关
+            </h4>
+            <div class="bg-gray-50 rounded-lg p-4 space-y-3">
+              <label v-if="canAutoManagement" class="flex items-center justify-between gap-4">
+                <span class="text-gray-700">自动管理</span>
+                <input
+                  type="checkbox"
+                  :checked="detail.autoManagement === true"
+                  @change="handleAdvancedSwitch('autoManagement', ($event.target as HTMLInputElement).checked)"
+                  class="h-4 w-4"
+                  :disabled="mutating"
+                />
+              </label>
+              <label v-if="canSequentialDownload" class="flex items-center justify-between gap-4">
+                <span class="text-gray-700">顺序下载</span>
+                <input
+                  type="checkbox"
+                  :checked="detail.sequentialDownload === true"
+                  @change="handleAdvancedSwitch('sequentialDownload', ($event.target as HTMLInputElement).checked)"
+                  class="h-4 w-4"
+                  :disabled="mutating"
+                />
+              </label>
+              <label v-if="canFirstLastPiecePriority" class="flex items-center justify-between gap-4">
+                <span class="text-gray-700">首尾块优先</span>
+                <input
+                  type="checkbox"
+                  :checked="detail.firstLastPiecePriority === true"
+                  @change="handleAdvancedSwitch('firstLastPiecePriority', ($event.target as HTMLInputElement).checked)"
+                  class="h-4 w-4"
+                  :disabled="mutating"
+                />
+              </label>
+              <label v-if="canSuperSeeding" class="flex items-center justify-between gap-4">
+                <span class="text-gray-700">超级做种</span>
+                <input
+                  type="checkbox"
+                  :checked="detail.superSeeding === true"
+                  @change="handleAdvancedSwitch('superSeeding', ($event.target as HTMLInputElement).checked)"
+                  class="h-4 w-4"
+                  :disabled="mutating"
+                />
+              </label>
+            </div>
+          </div>
         </div>
 
         <!-- 文件 Tab -->
@@ -703,6 +1444,7 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
               <div v-if="node.type === 'folder'">
                 <div
                   @click="toggleFolder(node.path)"
+                  @contextmenu="openFileContextMenu($event, node)"
                   class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 cursor-pointer text-sm"
                 >
                   <!-- 文件名 -->
@@ -710,14 +1452,32 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
                     class="min-w-0 px-3"
                     :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
                   >
-                    <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + node.level * 16}px` }">
+                    <div class="flex items-center min-w-0 w-full" :style="{ paddingLeft: `${8 + node.level * 16}px` }">
                       <Icon
                         :name="expandedFolders.has(node.path) ? 'chevron-down' : 'chevron-right'"
                         :size="12"
                         class="text-gray-400 shrink-0 mr-1"
                       />
                       <Icon name="folder" :size="14" class="text-yellow-500 shrink-0 mr-1.5" />
-                      <span class="truncate text-gray-700">{{ node.name }}</span>
+                      <span class="truncate text-gray-700 flex-1 min-w-0">{{ node.name }}</span>
+                      <button
+                        v-if="canRenameFolder"
+                        @click.stop="handleRenamePath(node)"
+                        class="ml-2 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                        title="重命名文件夹"
+                        :disabled="mutating"
+                      >
+                        <Icon name="edit-2" :size="12" />
+                      </button>
+                      <button
+                        v-if="canMoveFolder"
+                        @click.stop="handleMovePath(node)"
+                        class="ml-1 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                        title="移动文件夹"
+                        :disabled="mutating"
+                      >
+                        <Icon name="folder-input" :size="12" />
+                      </button>
                     </div>
                   </div>
 
@@ -757,6 +1517,7 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
                     <div v-if="child.type === 'folder'">
                       <div
                         @click="toggleFolder(child.path)"
+                        @contextmenu="openFileContextMenu($event, child)"
                         class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 cursor-pointer text-sm"
                       >
                         <!-- 文件名 -->
@@ -764,14 +1525,32 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
                           class="min-w-0 px-3"
                           :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
                         >
-                          <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + child.level * 16}px` }">
+                          <div class="flex items-center min-w-0 w-full" :style="{ paddingLeft: `${8 + child.level * 16}px` }">
                             <Icon
                               :name="expandedFolders.has(child.path) ? 'chevron-down' : 'chevron-right'"
                               :size="12"
                               class="text-gray-400 shrink-0 mr-1"
                             />
                             <Icon name="folder" :size="14" class="text-yellow-500 shrink-0 mr-1.5" />
-                            <span class="truncate text-gray-700">{{ child.name }}</span>
+                            <span class="truncate text-gray-700 flex-1 min-w-0">{{ child.name }}</span>
+                            <button
+                              v-if="canRenameFolder"
+                              @click.stop="handleRenamePath(child)"
+                              class="ml-2 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                              title="重命名文件夹"
+                              :disabled="mutating"
+                            >
+                              <Icon name="edit-2" :size="12" />
+                            </button>
+                            <button
+                              v-if="canMoveFolder"
+                              @click.stop="handleMovePath(child)"
+                              class="ml-1 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                              title="移动文件夹"
+                              :disabled="mutating"
+                            >
+                              <Icon name="folder-input" :size="12" />
+                            </button>
                           </div>
                         </div>
 
@@ -811,16 +1590,35 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
                           <div
                             v-if="grandchild.type === 'file'"
                             class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
+                            @contextmenu="openFileContextMenu($event, grandchild)"
                           >
                             <!-- 文件名 -->
                             <div
                               class="min-w-0 px-3"
                               :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
                             >
-                              <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + grandchild.level * 16}px` }">
+                              <div class="flex items-center min-w-0 w-full" :style="{ paddingLeft: `${8 + grandchild.level * 16}px` }">
                                 <span class="w-3.5 shrink-0"></span>
                                 <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
-                                <span class="truncate text-gray-900">{{ grandchild.name }}</span>
+                                <span class="truncate text-gray-900 flex-1 min-w-0">{{ grandchild.name }}</span>
+                                <button
+                                  v-if="canRenameFile"
+                                  @click.stop="handleRenamePath(grandchild)"
+                                  class="ml-2 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                                  title="重命名文件"
+                                  :disabled="mutating"
+                                >
+                                  <Icon name="edit-2" :size="12" />
+                                </button>
+                                <button
+                                  v-if="canMoveFile"
+                                  @click.stop="handleMovePath(grandchild)"
+                                  class="ml-1 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                                  title="移动文件"
+                                  :disabled="mutating"
+                                >
+                                  <Icon name="folder-input" :size="12" />
+                                </button>
                               </div>
                             </div>
 
@@ -875,16 +1673,35 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
                     <div
                       v-else
                       class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
+                      @contextmenu="openFileContextMenu($event, child)"
                     >
                       <!-- 文件名 -->
                       <div
                         class="min-w-0 px-3"
                         :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
                       >
-                        <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + child.level * 16}px` }">
+                        <div class="flex items-center min-w-0 w-full" :style="{ paddingLeft: `${8 + child.level * 16}px` }">
                           <span class="w-3.5 shrink-0"></span>
                           <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
-                          <span class="truncate text-gray-900">{{ child.name }}</span>
+                          <span class="truncate text-gray-900 flex-1 min-w-0">{{ child.name }}</span>
+                          <button
+                            v-if="canRenameFile"
+                            @click.stop="handleRenamePath(child)"
+                            class="ml-2 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                            title="重命名文件"
+                            :disabled="mutating"
+                          >
+                            <Icon name="edit-2" :size="12" />
+                          </button>
+                          <button
+                            v-if="canMoveFile"
+                            @click.stop="handleMovePath(child)"
+                            class="ml-1 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                            title="移动文件"
+                            :disabled="mutating"
+                          >
+                            <Icon name="folder-input" :size="12" />
+                          </button>
                         </div>
                       </div>
 
@@ -939,16 +1756,35 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
               <div
                 v-else
                 class="flex items-center py-1.5 hover:bg-gray-50 border-b border-gray-100 text-sm"
+                @contextmenu="openFileContextMenu($event, node)"
               >
                 <!-- 文件名 -->
                 <div
                   class="min-w-0 px-3"
                   :style="getFlexStyle(filesColumnById, 'filename', false, filesResizeState.isResizing)"
                 >
-                  <div class="flex items-center min-w-0" :style="{ paddingLeft: `${8 + node.level * 16}px` }">
+                  <div class="flex items-center min-w-0 w-full" :style="{ paddingLeft: `${8 + node.level * 16}px` }">
                     <span class="w-3.5 shrink-0"></span>
                     <Icon name="file" :size="14" class="text-gray-400 shrink-0 mr-1.5" />
-                    <span class="truncate text-gray-900">{{ node.name }}</span>
+                    <span class="truncate text-gray-900 flex-1 min-w-0">{{ node.name }}</span>
+                    <button
+                      v-if="canRenameFile"
+                      @click.stop="handleRenamePath(node)"
+                      class="ml-2 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                      title="重命名文件"
+                      :disabled="mutating"
+                    >
+                      <Icon name="edit-2" :size="12" />
+                    </button>
+                    <button
+                      v-if="canMoveFile"
+                      @click.stop="handleMovePath(node)"
+                      class="ml-1 p-1 rounded hover:bg-gray-100 text-gray-400 hover:text-gray-700 shrink-0"
+                      title="移动文件"
+                      :disabled="mutating"
+                    >
+                      <Icon name="folder-input" :size="12" />
+                    </button>
                   </div>
                 </div>
 
@@ -1006,6 +1842,39 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
 
         <!-- 服务器 Tab -->
         <div v-else-if="activeTab === 'trackers'" class="h-full flex flex-col">
+          <div
+            v-if="canTrackerManagement"
+            class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50 shrink-0"
+          >
+            <button
+              @click="handleAddTrackers"
+              class="icon-btn"
+              title="添加 Tracker"
+              :disabled="mutating"
+            >
+              <Icon name="plus" :size="16" />
+            </button>
+            <button
+              @click="handleEditSelectedTracker"
+              class="icon-btn"
+              title="编辑 Tracker"
+              :disabled="mutating || selectedTrackerUrls.size !== 1"
+            >
+              <Icon name="edit-2" :size="16" />
+            </button>
+            <button
+              @click="handleRemoveSelectedTrackers"
+              class="icon-btn icon-btn-danger"
+              title="移除 Tracker"
+              :disabled="mutating || selectedTrackerUrls.size === 0"
+            >
+              <Icon name="trash-2" :size="16" />
+            </button>
+            <div class="ml-auto text-xs text-gray-500">
+              已选 {{ selectedTrackerUrls.size }}
+            </div>
+          </div>
+
           <!-- 表头 -->
           <ResizableTableHeader
             :columns="trackersColumns"
@@ -1018,7 +1887,9 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
             <div
               v-for="(tracker, index) in detail.trackers"
               :key="index"
-              class="flex items-center py-2 hover:bg-gray-50 border-b border-gray-100 text-sm"
+              @click="toggleTrackerSelection(tracker.url)"
+              class="flex items-center py-2 border-b border-gray-100 text-sm cursor-pointer"
+              :class="selectedTrackerUrls.has(tracker.url) ? 'bg-blue-50' : 'hover:bg-gray-50'"
             >
               <!-- URL -->
               <div class="min-w-0 px-3" :style="getFlexStyle(trackersColumnById, 'url', false, trackersResizeState.isResizing)">
@@ -1061,6 +1932,31 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
 
         <!-- Peers Tab -->
         <div v-else-if="activeTab === 'peers'" class="h-full flex flex-col">
+          <div
+            v-if="canPeerManagement"
+            class="flex items-center gap-2 px-3 py-2 border-b border-gray-200 bg-gray-50 shrink-0"
+          >
+            <button
+              @click="handleAddPeers"
+              class="icon-btn"
+              title="添加 Peers"
+              :disabled="mutating"
+            >
+              <Icon name="plus" :size="16" />
+            </button>
+            <button
+              @click="handleBanSelectedPeers"
+              class="icon-btn icon-btn-danger"
+              title="封禁已选 Peers（全局）"
+              :disabled="mutating || selectedPeers.size === 0"
+            >
+              <Icon name="alert-triangle" :size="16" />
+            </button>
+            <div class="ml-auto text-xs text-gray-500">
+              已选 {{ selectedPeers.size }}
+            </div>
+          </div>
+
           <!-- 表头 -->
           <ResizableTableHeader
             :columns="peersColumns"
@@ -1073,7 +1969,9 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
             <div
               v-for="(peer, index) in detail.peers"
               :key="index"
-              class="flex items-center py-2 hover:bg-gray-50 border-b border-gray-100 text-sm"
+              @click="togglePeerSelection(peer)"
+              class="flex items-center py-2 border-b border-gray-100 text-sm cursor-pointer"
+              :class="selectedPeers.has(peerKey(peer)) ? 'bg-blue-50' : 'hover:bg-gray-50'"
             >
               <!-- IP:Port -->
               <div class="px-3 shrink-0" :style="getFlexStyle(peersColumnById, 'address', false, peersResizeState.isResizing)">
@@ -1128,6 +2026,127 @@ async function handlePriorityChange(node: FileTreeNode, raw: string) {
       </div>
     </div>
   </div>
+
+  <!-- 单种子限速对话框 -->
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition-opacity duration-200"
+      enter-from-class="opacity-0"
+      enter-to-class="opacity-100"
+      leave-active-class="transition-opacity duration-200"
+      leave-from-class="opacity-100"
+      leave-to-class="opacity-0"
+    >
+      <div
+        v-if="showLimitDialog"
+        class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+        @click.self="showLimitDialog = false"
+      >
+        <Transition
+          enter-active-class="transition-all duration-200"
+          enter-from-class="opacity-0 scale-95"
+          enter-to-class="opacity-100 scale-100"
+          leave-active-class="transition-all duration-200"
+          leave-from-class="opacity-100 scale-100"
+          leave-to-class="opacity-0 scale-95"
+        >
+          <div
+            v-if="showLimitDialog"
+            class="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden"
+            @click.stop
+          >
+            <div class="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
+              <h2 class="text-lg font-semibold text-gray-900">单种子限速</h2>
+              <button
+                @click="showLimitDialog = false"
+                class="p-1 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                <Icon name="x" :size="20" class="text-gray-500" />
+              </button>
+            </div>
+
+            <div class="p-6 space-y-4">
+              <div class="space-y-2">
+                <label class="block text-sm font-medium text-gray-700">
+                  下载限速（{{ speedUnitLabel }}）
+                </label>
+                <input
+                  v-model="dlLimitInput"
+                  type="text"
+                  class="input font-mono"
+                  placeholder="留空或 0 表示不限速"
+                />
+              </div>
+
+              <div class="space-y-2">
+                <label class="block text-sm font-medium text-gray-700">
+                  上传限速（{{ speedUnitLabel }}）
+                </label>
+                <input
+                  v-model="upLimitInput"
+                  type="text"
+                  class="input font-mono"
+                  placeholder="留空或 0 表示不限速"
+                />
+              </div>
+
+              <p class="text-xs text-gray-500">
+                提示：Transmission 的速度单位可能是 kB/s（1000），qBittorrent 按 KiB/s（1024）处理。
+              </p>
+
+              <div class="flex justify-end gap-2 pt-2">
+                <button
+                  class="btn"
+                  @click="showLimitDialog = false"
+                  :disabled="mutating"
+                >
+                  取消
+                </button>
+                <button
+                  class="btn btn-primary"
+                  @click="saveLimits"
+                  :disabled="mutating"
+                >
+                  保存
+                </button>
+              </div>
+            </div>
+          </div>
+        </Transition>
+      </div>
+    </Transition>
+  </Teleport>
+
+  <!-- 文件右键菜单 -->
+  <Teleport to="body">
+    <Transition
+      enter-active-class="transition-opacity duration-150"
+      leave-active-class="transition-opacity duration-150"
+    >
+      <div
+        v-if="fileContextMenuState.show"
+        class="fixed z-50 bg-white rounded-lg shadow-xl border border-gray-200 py-1 min-w-[180px] max-h-[60vh] overflow-y-auto"
+        :style="{
+          left: `${fileMenuPosition.left}px`,
+          top: `${fileMenuPosition.top}px`
+        }"
+        @click.stop
+      >
+        <button
+          v-for="item in fileMenuItems"
+          :key="item.id"
+          @click="item.action()"
+          :class="`w-full px-4 py-2 text-left text-sm flex items-center gap-3 ${
+            item.disabled ? 'opacity-50 cursor-not-allowed' : 'text-gray-700 hover:bg-gray-50 cursor-pointer'
+          }`"
+          :disabled="item.disabled"
+        >
+          <Icon :name="item.icon" :size="16" />
+          <span>{{ item.label }}</span>
+        </button>
+      </div>
+    </Transition>
+  </Teleport>
 </template>
 
 <style scoped>

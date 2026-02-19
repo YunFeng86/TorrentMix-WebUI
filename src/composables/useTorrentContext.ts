@@ -34,6 +34,10 @@ export type TorrentAction =
   | 'reannounce'
   | 'forceStart'
   | 'force-start'
+  | 'queue-top'
+  | 'queue-up'
+  | 'queue-down'
+  | 'queue-bottom'
 
 function getDefaultViewMode(): TorrentUIState['viewMode'] {
   if (typeof window === 'undefined') return 'list'
@@ -209,7 +213,27 @@ export function useTorrentContext() {
   )
 
   // ===== Data refresh =====
-  async function refreshList(): Promise<FetchListResult> {
+  type Deferred<T> = {
+    promise: Promise<T>
+    resolve: (value: T) => void
+    reject: (error: unknown) => void
+  }
+
+  function createDeferred<T>(): Deferred<T> {
+    let resolve!: (value: T) => void
+    let reject!: (error: unknown) => void
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    return { promise, resolve, reject }
+  }
+
+  let refreshDeferred: Deferred<FetchListResult> | null = null
+  let refreshRunning = false
+  let refreshQueued = false
+
+  async function refreshOnce(): Promise<FetchListResult> {
     const result = await adapter.value.fetchList()
     torrentStore.updateTorrents(result.torrents)
     backendStore.updateGlobalData({
@@ -218,6 +242,37 @@ export function useTorrentContext() {
       serverState: result.serverState,
     })
     return result
+  }
+
+  async function refreshWorker(): Promise<void> {
+    if (refreshRunning) return
+    if (!refreshDeferred) return
+
+    refreshRunning = true
+    try {
+      let last: FetchListResult
+      do {
+        refreshQueued = false
+        last = await refreshOnce()
+      } while (refreshQueued)
+      refreshDeferred.resolve(last!)
+    } catch (error) {
+      refreshDeferred.reject(error)
+    } finally {
+      refreshDeferred = null
+      refreshRunning = false
+      refreshQueued = false
+    }
+  }
+
+  function refreshList(): Promise<FetchListResult> {
+    if (!refreshDeferred) {
+      refreshDeferred = createDeferred<FetchListResult>()
+      void refreshWorker()
+    } else {
+      refreshQueued = true
+    }
+    return refreshDeferred.promise
   }
 
   function getTorrentName(hash: string): string {
@@ -256,41 +311,58 @@ export function useTorrentContext() {
   ) {
     if (hashes.length === 0) return
 
-    switch (action) {
-      case 'pause':
-        await adapter.value.pause(hashes)
-        break
-      case 'resume':
-        await adapter.value.resume(hashes)
-        break
-      case 'delete': {
-        const confirmed = confirmDelete(hashes)
-        if (!confirmed) return
-        await adapter.value.delete(hashes, confirmed.deleteFiles)
-        // 删除后避免 selection 里残留已不存在的 hash
-        removeFromSelection(hashes)
-        break
+    backendStore.beginMutation()
+    try {
+      switch (action) {
+        case 'pause':
+          await adapter.value.pause(hashes)
+          break
+        case 'resume':
+          await adapter.value.resume(hashes)
+          break
+        case 'delete': {
+          const confirmed = confirmDelete(hashes)
+          if (!confirmed) return
+          await adapter.value.delete(hashes, confirmed.deleteFiles)
+          // 删除后避免 selection 里残留已不存在的 hash
+          removeFromSelection(hashes)
+          break
+        }
+        case 'recheck':
+          if (hashes.length === 1) await adapter.value.recheck(hashes[0]!)
+          else await adapter.value.recheckBatch(hashes)
+          break
+        case 'reannounce':
+          if (hashes.length === 1) await adapter.value.reannounce(hashes[0]!)
+          else await adapter.value.reannounceBatch(hashes)
+          break
+        case 'forceStart':
+        case 'force-start':
+          if (hashes.length === 1) await adapter.value.forceStart(hashes[0]!, true)
+          else await adapter.value.forceStartBatch(hashes, true)
+          break
+        case 'queue-top':
+          await adapter.value.queueMoveTop(hashes)
+          break
+        case 'queue-up':
+          await adapter.value.queueMoveUp(hashes)
+          break
+        case 'queue-down':
+          await adapter.value.queueMoveDown(hashes)
+          break
+        case 'queue-bottom':
+          await adapter.value.queueMoveBottom(hashes)
+          break
+        default:
+          console.warn('[useTorrentContext] Unknown action:', action)
+          return
       }
-      case 'recheck':
-        if (hashes.length === 1) await adapter.value.recheck(hashes[0]!)
-        else await adapter.value.recheckBatch(hashes)
-        break
-      case 'reannounce':
-        if (hashes.length === 1) await adapter.value.reannounce(hashes[0]!)
-        else await adapter.value.reannounceBatch(hashes)
-        break
-      case 'forceStart':
-      case 'force-start':
-        if (hashes.length === 1) await adapter.value.forceStart(hashes[0]!, true)
-        else await adapter.value.forceStartBatch(hashes, true)
-        break
-      default:
-        console.warn('[useTorrentContext] Unknown action:', action)
-        return
-    }
 
-    if (options?.clearSelection) clearSelection()
-    if (options?.refresh !== false) await refreshList()
+      if (options?.clearSelection) clearSelection()
+      if (options?.refresh !== false) await refreshList()
+    } finally {
+      backendStore.endMutation()
+    }
   }
 
   return {
