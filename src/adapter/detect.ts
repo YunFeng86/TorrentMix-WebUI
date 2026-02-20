@@ -44,10 +44,11 @@ function getHeader(headers: Record<string, unknown> | undefined, key: string): s
 }
 
 async function probeTransmissionWithRetry(
-  detector: ReturnType<typeof axios.create>
+  detector: ReturnType<typeof axios.create>,
+  rpcUrl: string
 ): Promise<Pick<BackendVersion, 'version' | 'major' | 'minor' | 'patch' | 'rpcSemver' | 'isUnknown'> | null> {
   const call = async (headers?: Record<string, string>) => detector.post(
-    '/transmission/rpc',
+    rpcUrl,
     { method: 'session-get' },
     {
       validateStatus: () => true,
@@ -115,6 +116,17 @@ function getEnv(): Record<string, any> {
   return {}
 }
 
+function getTransmissionRpcUrl(): string {
+  const env = getEnv()
+
+  // 开发环境走 Vite 代理
+  if (env.DEV) return '/transmission/rpc'
+
+  // 生产环境默认同源（推荐）；若显式配置 VITE_TR_URL，则优先使用它
+  const configured = String(env.VITE_TR_URL ?? '').trim()
+  return configured || '/transmission/rpc'
+}
+
 // 从环境变量读取强制指定的后端类型
 function getForcedBackend(): BackendType | null {
   const env = getEnv()
@@ -162,12 +174,12 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
 
   // 缓存未命中或过期，重新检测
   const useRelativePath = shouldUseRelativePath()
-  const baseURL = useRelativePath ? '' : getQbitBaseUrl()
-  const detector = axios.create({ baseURL, timeout, withCredentials: false })
+  const qbitBaseURL = useRelativePath ? '' : getQbitBaseUrl()
+  const qbitDetector = axios.create({ baseURL: qbitBaseURL, timeout, withCredentials: false })
 
   // 尝试 qBittorrent
   try {
-    const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
+    const res = await qbitDetector.get('/api/v2/app/version', { validateStatus: () => true })
     if (res.status === 200 || res.status === 403) {
       backendTypeCache = { type: 'qbit', timestamp: Date.now() }
       return 'qbit'
@@ -176,11 +188,9 @@ export async function detectBackendTypeOnly(timeout = 3000): Promise<BackendType
 
   // 尝试 Transmission
   try {
-    const res = await detector.post('/transmission/rpc', { method: 'session-get' }, {
-      validateStatus: () => true,
-      headers: { 'Content-Type': 'application/json' }
-    })
-    if (res.status === 409 || res.status === 200) {
+    const transDetector = axios.create({ timeout, withCredentials: false })
+    const res = await probeTransmissionWithRetry(transDetector, getTransmissionRpcUrl())
+    if (res) {
       backendTypeCache = { type: 'trans', timestamp: Date.now() }
       return 'trans'
     }
@@ -344,14 +354,16 @@ export async function detectBackendWithVersionAuth(_timeout = 3000): Promise<Bac
 export async function detectBackendWithVersion(timeout = 3000): Promise<BackendVersion> {
   const forced = getForcedBackend()
   const useRelativePath = shouldUseRelativePath()
-  const baseURL = useRelativePath ? '' : getQbitBaseUrl()
+  const qbitBaseURL = useRelativePath ? '' : getQbitBaseUrl()
 
-  const detector = axios.create({ baseURL, timeout, withCredentials: false })
+  const qbitDetector = axios.create({ baseURL: qbitBaseURL, timeout, withCredentials: false })
+  const transDetector = axios.create({ timeout, withCredentials: false })
+  const transRpcUrl = getTransmissionRpcUrl()
 
   // 强制 qBittorrent：只尝试 qB
   if (forced === 'qbit') {
     try {
-      const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
+      const res = await qbitDetector.get('/api/v2/app/version', { validateStatus: () => true })
       if (res.status === 200 || res.status === 403) {
         const version = res.status === 200 ? String(res.data).trim() : 'unknown'
         const parsed = parseVersion(version)
@@ -359,7 +371,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
         let apiVersion: string | undefined
         if (res.status === 200) {
           try {
-            const apiRes = await detector.get('/api/v2/app/webapiVersion')
+            const apiRes = await qbitDetector.get('/api/v2/app/webapiVersion')
             apiVersion = String(apiRes.data).trim()
           } catch {}
         }
@@ -390,7 +402,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
   // 强制 Transmission：只尝试 TR
   if (forced === 'trans') {
     try {
-      const res = await probeTransmissionWithRetry(detector)
+      const res = await probeTransmissionWithRetry(transDetector, transRpcUrl)
       if (res) return { type: 'trans', ...res }
     } catch {}
 
@@ -406,7 +418,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
 
   // 自动探测：尝试 qBittorrent
   try {
-    const res = await detector.get('/api/v2/app/version', { validateStatus: () => true })
+    const res = await qbitDetector.get('/api/v2/app/version', { validateStatus: () => true })
     if (res.status === 200 || res.status === 403) {
       const version = res.status === 200 ? String(res.data).trim() : 'unknown'
       const parsed = parseVersion(version)
@@ -415,7 +427,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
       let apiVersion: string | undefined
       if (res.status === 200) {
         try {
-          const apiRes = await detector.get('/api/v2/app/webapiVersion')
+          const apiRes = await qbitDetector.get('/api/v2/app/webapiVersion')
           apiVersion = String(apiRes.data).trim()
         } catch {}
       }
@@ -436,7 +448,7 @@ export async function detectBackendWithVersion(timeout = 3000): Promise<BackendV
 
   // 尝试 Transmission
   try {
-    const res = await probeTransmissionWithRetry(detector)
+    const res = await probeTransmissionWithRetry(transDetector, transRpcUrl)
     if (res) return { type: 'trans', ...res }
   } catch {}
 

@@ -11,9 +11,23 @@ import axios from 'axios'
 // Session ID 存储（按实例作用域隔离）
 let sessionId = ''
 
-// 开发环境走 Vite 代理，baseURL 留空
-const env = (import.meta as any).env ?? {}
-const baseURL = env.DEV ? '/transmission/rpc' : (env.VITE_TR_URL || 'http://localhost:9091/transmission/rpc')
+function getConfiguredTransBaseUrl(): string {
+  // `import.meta.env` is Vite-specific; guard it for non-Vite runtimes (e.g. Node tests).
+  const env = (import.meta as any).env ?? {}
+
+  // 开发环境走 Vite 代理
+  if (env.DEV) return '/transmission/rpc'
+
+  // 生产环境默认同源（推荐），不再默认指向浏览器的 localhost（远程访问会直接翻车）
+  const configured = String(env.VITE_TR_URL ?? '').trim()
+  return configured || '/transmission/rpc'
+}
+
+export function getTransmissionBaseUrl(): string {
+  return getConfiguredTransBaseUrl()
+}
+
+const baseURL = getConfiguredTransBaseUrl()
 
 export const transClient = axios.create({
   baseURL,

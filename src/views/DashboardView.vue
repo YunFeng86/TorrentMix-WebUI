@@ -29,6 +29,7 @@ import Icon from '@/components/Icon.vue'
 import TorrentContextMenu from '@/components/torrent/contextmenu/TorrentContextMenu.vue'
 import { formatSpeed, formatBytes } from '@/utils/format'
 import SafeText from '@/components/SafeText.vue'
+import QueueMenu from '@/components/toolbar/QueueMenu.vue'
 
 // 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
 const VIRTUAL_SCROLL_THRESHOLD = 200
@@ -435,6 +436,10 @@ const isAllSelected = computed(() => {
   return total > 0 && selectedCount.value === total
 })
 
+function handleQueueAction(action: 'queue-top' | 'queue-up' | 'queue-down' | 'queue-bottom') {
+  void runTorrentAction(action, Array.from(uiState.selection), { clearSelection: true })
+}
+
 function handleToolbarAction(actionId: string) {
   switch (actionId) {
     case 'filter':
@@ -467,18 +472,6 @@ function handleToolbarAction(actionId: string) {
     case 'batchSpeedLimit':
       void handleBatchSpeedLimit()
       break
-    case 'queueTopSelected':
-      void runTorrentAction('queue-top', Array.from(uiState.selection), { clearSelection: true })
-      break
-    case 'queueUpSelected':
-      void runTorrentAction('queue-up', Array.from(uiState.selection), { clearSelection: true })
-      break
-    case 'queueDownSelected':
-      void runTorrentAction('queue-down', Array.from(uiState.selection), { clearSelection: true })
-      break
-    case 'queueBottomSelected':
-      void runTorrentAction('queue-bottom', Array.from(uiState.selection), { clearSelection: true })
-      break
     case 'categoryManage':
       showCategoryManage.value = true
       break
@@ -510,10 +503,7 @@ const toolbarBatchItems = computed<OverflowActionItem[]>(() => [
   { id: 'reannounceSelected', title: '重新汇报', icon: 'radio', disabled: selectedCount.value === 0, pinned: true, priority: 1, group: 'batch', groupLabel: '批量' },
   { id: 'forceStartSelected', title: '强制开始', icon: 'zap', disabled: selectedCount.value === 0, pinned: true, priority: 2, group: 'batch', groupLabel: '批量' },
   { id: 'batchSpeedLimit', title: '批量限速', icon: 'sliders', disabled: selectedCount.value === 0, pinned: true, priority: 3, group: 'batch', groupLabel: '批量' },
-  { id: 'queueTopSelected', title: '置顶', icon: 'chevrons-up', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 10, group: 'queue', groupLabel: '队列' },
-  { id: 'queueUpSelected', title: '上移', icon: 'chevron-up', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 11, group: 'queue', groupLabel: '队列' },
-  { id: 'queueDownSelected', title: '下移', icon: 'chevron-down', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 12, group: 'queue', groupLabel: '队列' },
-  { id: 'queueBottomSelected', title: '置底', icon: 'chevrons-down', show: capabilities.value.hasTorrentQueue, disabled: selectedCount.value === 0, pinned: false, priority: 13, group: 'queue', groupLabel: '队列' },
+  // 队列管理按钮已移到独立的 QueueMenu 组件中
 ])
 
 const toolbarSelectItems = computed<OverflowActionItem[]>(() => [
@@ -1003,6 +993,13 @@ onUnmounted(() => {
               @action="handleToolbarAction"
             />
 
+            <QueueMenu
+              v-if="capabilities.hasTorrentQueue"
+              :selected-count="selectedCount"
+              :disabled="selectedCount === 0"
+              @action="handleQueueAction"
+            />
+
             <div class="flex items-center gap-2 min-w-0">
               <OverflowActionBar
                 class="min-w-0"
@@ -1131,6 +1128,12 @@ onUnmounted(() => {
                 overflow-title="更多操作"
                 grouped
                 @action="handleToolbarAction"
+              />
+              <QueueMenu
+                v-if="capabilities.hasTorrentQueue"
+                :selected-count="selectedCount"
+                :disabled="selectedCount === 0"
+                @action="handleQueueAction"
               />
               <OverflowActionBar
                 class="ml-auto flex-initial min-w-0"
