@@ -5,7 +5,7 @@ import type { UnifiedTorrentDetail } from '@/adapter/types'
 import Icon from '@/components/Icon.vue'
 import SafeText from '@/components/SafeText.vue'
 import { formatBytes, formatSpeed, formatDuration } from '@/utils/format'
-import { VIRTUAL_ROOT_EXTERNAL, VIRTUAL_ROOT_EXTERNAL_PREFIX } from '@/utils/folderTree'
+import { isVirtualExternalPath, stripVirtualExternalPrefix } from '@/utils/folderTree'
 
 interface Props {
   open: boolean
@@ -107,9 +107,8 @@ const categoryDisplay = computed(() => {
   const raw = detail.value?.category ?? ''
   if (!raw) return ''
   if (!backendStore.isTrans) return raw
-  if (raw === VIRTUAL_ROOT_EXTERNAL) return '外部目录'
-  if (raw.startsWith(VIRTUAL_ROOT_EXTERNAL_PREFIX)) {
-    const rest = raw.slice(VIRTUAL_ROOT_EXTERNAL_PREFIX.length)
+  if (isVirtualExternalPath(raw)) {
+    const rest = stripVirtualExternalPrefix(raw)
     return rest ? `外部目录/${rest}` : '外部目录'
   }
   return raw
@@ -117,7 +116,7 @@ const categoryDisplay = computed(() => {
 
 const categoryIcon = computed(() => {
   const raw = detail.value?.category ?? ''
-  if (backendStore.isTrans && (raw === VIRTUAL_ROOT_EXTERNAL || raw.startsWith(VIRTUAL_ROOT_EXTERNAL_PREFIX))) {
+  if (backendStore.isTrans && isVirtualExternalPath(raw)) {
     return 'globe'
   }
   return 'folder'

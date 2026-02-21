@@ -7,16 +7,6 @@ export type TorrentState =
   | 'error'
   | 'queued'
 
-// 种子状态常量
-export const TorrentStateValues = {
-  Downloading: 'downloading' as const,
-  Seeding: 'seeding' as const,
-  Paused: 'paused' as const,
-  Checking: 'checking' as const,
-  Error: 'error' as const,
-  Queued: 'queued' as const
-}
-
 // 统一种子接口
 export interface UnifiedTorrent {
   id: string;          // qB: hash

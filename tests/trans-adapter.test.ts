@@ -663,7 +663,7 @@ test('Transmission json-rpc2: getTransferSettings should respect units.speed_byt
     assert.equal(settings.downloadLimit, 10 * 1000)
     assert.equal(settings.uploadLimit, 0)
     assert.equal(settings.altEnabled, true)
-    assert.equal(settings.altDownloadLimit, 1 * 1000)
+    assert.equal(settings.altDownloadLimit, 1000)
     assert.equal(settings.altUploadLimit, 2 * 1000)
     assert.equal(settings.speedBytes, 1000)
   } finally {

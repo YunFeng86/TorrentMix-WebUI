@@ -78,6 +78,49 @@ function parseHtmlEntries(html) {
   }
 }
 
+async function tryParseViteManifestEntries(releaseDir) {
+  // Vite build.manifest 输出位置（Vite 5+）：dist/.vite/manifest.json
+  const manifestPath = path.join(releaseDir, '.vite', 'manifest.json')
+  let raw = ''
+  try {
+    raw = await fs.readFile(manifestPath, 'utf8')
+  } catch {
+    return null
+  }
+
+  let manifest
+  try {
+    manifest = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!manifest || typeof manifest !== 'object') return null
+
+  const records = Object.values(manifest)
+  const entry =
+    manifest['index.html'] ||
+    records.find((r) => r && typeof r === 'object' && r.isEntry === true)
+
+  if (!entry || typeof entry !== 'object') return null
+
+  const js = entry.file ? [String(entry.file)] : []
+  const css = Array.isArray(entry.css) ? entry.css.map(String) : []
+
+  const clean = (p) => normalizeRelPath(String(p).trim().replace(/^\//, '').replace(/^\.\//, ''))
+  return {
+    js: js.map(clean).filter(Boolean),
+    css: css.map(clean).filter(Boolean),
+  }
+}
+
+async function resolveEntryAssets(releaseDir) {
+  const fromVite = await tryParseViteManifestEntries(releaseDir)
+  if (fromVite) return fromVite
+
+  const indexHtml = await fs.readFile(path.join(releaseDir, 'index.html'), 'utf8')
+  return parseHtmlEntries(indexHtml)
+}
+
 function buildCspMeta({ scriptSha256B64 }) {
   const scriptHash = `sha256-${scriptSha256B64}`
   return [
@@ -126,9 +169,42 @@ function buildPortableHtml({ baseHtml, cssText, jsText }) {
   return html
 }
 
+function deriveGhPagesLatestUrl(repoFullName) {
+  const v = String(repoFullName || '').trim()
+  const parts = v.split('/')
+  if (parts.length !== 2) return ''
+  const [ownerRaw, repoRaw] = parts
+  const owner = String(ownerRaw || '').trim()
+  const repo = String(repoRaw || '').trim()
+  if (!owner || !repo) return ''
+
+  const ownerLower = owner.toLowerCase()
+  const repoLower = repo.toLowerCase()
+  // user/organization pages repository: owner.github.io
+  if (repoLower === `${ownerLower}.github.io`) {
+    return `https://${owner}.github.io/latest.json`
+  }
+  return `https://${owner}.github.io/${repo}/latest.json`
+}
+
+function deriveDefaultLatestCandidates() {
+  const explicit = String(process.env.DEFAULT_LATEST_URL || '').trim()
+  if (explicit) return [explicit]
+
+  const repo = String(process.env.GITHUB_REPOSITORY || '').trim()
+  if (!repo) return []
+
+  const ghPages = deriveGhPagesLatestUrl(repo)
+  const jsDelivr = `https://cdn.jsdelivr.net/gh/${repo}@gh-pages/latest.json`
+
+  return [ghPages, jsDelivr].filter(Boolean)
+}
+
 function buildLoaderHtml() {
   // 这是“方案 A”的最小 Loader：默认尝试同目录的 manifest/latest，失败则提示用户配置远端 latest.json。
   // 注意：浏览器端无法可靠判断“目录是否可写”；不要在这里玩玄学。
+  // noinspection JSAnnotator
+  const defaultCandidates = deriveDefaultLatestCandidates()
   return `<!doctype html>
 <html lang="zh-CN">
   <head>
@@ -182,6 +258,7 @@ function buildLoaderHtml() {
 
     <script type="module">
       const STORAGE_KEY = 'torrent-webui:latest-url'
+      const DEFAULT_CANDIDATES = ${JSON.stringify(defaultCandidates)}
 
       const els = {
         input: document.getElementById('manifestUrl'),
@@ -213,7 +290,7 @@ function buildLoaderHtml() {
         // 默认尝试同目录：在 GitHub Pages / 本地静态目录里直接打开 loader.html 也能跑起来
         const defaults = ['./latest.json', './manifest.json']
 
-        return [fromQuery, saved, ...defaults]
+        return [fromQuery, saved, ...DEFAULT_CANDIDATES, ...defaults]
           .map(s => String(s || '').trim())
           .filter(Boolean)
       }
@@ -239,9 +316,11 @@ function buildLoaderHtml() {
           return { manifest: data, manifestUrl: u.toString() }
         }
 
-        const releasePath = String(data?.release?.path || '').replace(/^\\/+/, '')
-        const manifestRel = String(data?.release?.manifest || 'manifest.json').replace(/^\\/+/, '')
-        const base = releasePath ? new URL(releasePath.replace(/\\/+$/, '') + '/', u).toString() : u.toString().replace(/[^/]*$/, '')
+        const releasePath = String(data?.release?.path || '').replace(new RegExp('^/+'), '')
+        const manifestRel = String(data?.release?.manifest || 'manifest.json').replace(new RegExp('^/+'), '')
+        const base = releasePath
+          ? new URL(releasePath.replace(new RegExp('/+$'), '') + '/', u).toString()
+          : u.toString().replace(/[^/]*$/, '')
         const manifestUrl = new URL(manifestRel, base).toString()
 
         const manifest = await fetchJson(manifestUrl)
@@ -257,7 +336,10 @@ function buildLoaderHtml() {
       }
 
       function normalizeRelPath(p) {
-        return String(p || '').trim().replace(/^\\/+/, '').replace(/^\\.\\//, '')
+        let s = String(p || '').trim()
+        while (s.startsWith('/')) s = s.slice(1)
+        if (s.startsWith('./')) s = s.slice(2)
+        return s
       }
 
       function loadAssets(manifestUrl, manifest) {
@@ -331,7 +413,7 @@ function buildLoaderHtml() {
       }
 
       // 初始化
-      els.input.value = localStorage.getItem(STORAGE_KEY) || ''
+      els.input.value = localStorage.getItem(STORAGE_KEY) || DEFAULT_CANDIDATES[0] || ''
       els.save.addEventListener('click', saveUrl)
       els.load.addEventListener('click', tryBoot)
 
@@ -343,9 +425,7 @@ function buildLoaderHtml() {
 }
 
 async function buildManifest({ releaseDir, version, name, commit, builtAtIso }) {
-  const indexPath = path.join(releaseDir, 'index.html')
-  const indexHtml = await fs.readFile(indexPath, 'utf8')
-  const entry = parseHtmlEntries(indexHtml)
+  const entry = await resolveEntryAssets(releaseDir)
 
   const allFiles = await listFilesRecursive(releaseDir)
 
@@ -434,17 +514,17 @@ async function main() {
   console.log('[publish] generate portable.html…')
   {
     const baseHtml = await fs.readFile(path.join(releaseDir, 'index.html'), 'utf8')
-    const { js, css } = parseHtmlEntries(baseHtml)
+    const { js, css } = await resolveEntryAssets(releaseDir)
     const cssEntries = css.filter(p => !/^(?:\.\/)?fonts\.css$/i.test(p))
 
-    if (js.length !== 1 || cssEntries.length !== 1) {
+    if (js.length !== 1 || cssEntries.length < 1) {
       throw new Error(
-        `portable build expects 1 js + 1 css entry, got js=${js.length}, css=${cssEntries.length}. ` +
+        `portable build expects 1 js + >=1 css entry, got js=${js.length}, css=${cssEntries.length}. ` +
         'Consider disabling code splitting for portable builds.'
       )
     }
 
-    const cssText = await fs.readFile(path.join(releaseDir, cssEntries[0]), 'utf8')
+    const cssText = (await Promise.all(cssEntries.map(p => fs.readFile(path.join(releaseDir, p), 'utf8')))).join('\n')
     const jsText = await fs.readFile(path.join(releaseDir, js[0]), 'utf8')
     const portable = buildPortableHtml({ baseHtml, cssText, jsText })
     await fs.writeFile(path.join(releaseDir, 'portable.html'), portable, 'utf8')

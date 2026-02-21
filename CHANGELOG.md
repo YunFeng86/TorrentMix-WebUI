@@ -28,3 +28,10 @@
 
   2) 兼容旧行为：构建时显式设置 `VITE_TR_URL`（例如 `http://localhost:9091/transmission/rpc`）。
 
+- CSP 默认收紧：生产构建的 `index.html` 将 `connect-src` 限制为 `'self'`，跨域直连后端（例如 `ui.example.com` → `qb.example.com`）会被浏览器直接拦截。
+
+  Migration（任选其一）:
+
+  1) 推荐：同源反向代理（例如通过 Nginx/Caddy 把 `/api/*` 与 `/transmission/*` 反代到后端），让 WebUI 与后端 API 走同一个 Origin。
+
+  2) 如必须跨域：自行修改 `index.html` 的 CSP `connect-src` 放通目标 Origin（并同时确保后端 CORS/凭证策略安全）。

@@ -11,7 +11,10 @@ interface Props {
   canQueue?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  canSetCategory: true,
+  canQueue: false,
+})
 const emit = defineEmits<{
   close: []
   action: [action: string, hashes: string[]]
@@ -61,8 +64,8 @@ const menuPosition = computed(() => {
  */
 const menuItems = computed<MenuItem[]>(() => {
   const isMulti = props.hashes.length > 1
-  const canSetCategory = props.canSetCategory !== false
-  const canQueue = props.canQueue === true
+  const canSetCategory = props.canSetCategory
+  const canQueue = props.canQueue
 
   const items: MenuItem[] = [
     {

@@ -570,7 +570,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   async setSequentialDownload(hashes: string[], enable: boolean): Promise<void> {
     const info = await this.resolveTorrentsInfoFlags(hashes)
     const toToggle = info
-      .filter(t => typeof t.hash === 'string' && Boolean(t.seq_dl) !== enable)
+      .filter(t => Boolean(t.seq_dl) !== enable)
       .map(t => t.hash)
       .filter(Boolean)
 
@@ -584,7 +584,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   async setFirstLastPiecePriority(hashes: string[], enable: boolean): Promise<void> {
     const info = await this.resolveTorrentsInfoFlags(hashes)
     const toToggle = info
-      .filter(t => typeof t.hash === 'string' && Boolean(t.f_l_piece_prio) !== enable)
+      .filter(t => Boolean(t.f_l_piece_prio) !== enable)
       .map(t => t.hash)
       .filter(Boolean)
 
@@ -674,7 +674,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
   async setDownloadLimitBatch(hashes: string[], limit: number): Promise<void> {
     // qB 的 setDownloadLimit 在不同端点/版本里对“无限制”的表达不完全一致（0/-1）。
     // 这里统一：<= 0 一律按“无限制”处理，并向后端发送 0（与 downloadLimit 端点保持一致）。
-    const raw = typeof limit === 'number' && Number.isFinite(limit) ? limit : 0
+    const raw = Number.isFinite(limit) ? limit : 0
     const normalized = raw <= 0 ? 0 : Math.round(raw)
     await apiClient.post('/api/v2/torrents/setDownloadLimit', null, {
       params: { hashes: hashes.join('|') || 'all', limit: normalized.toString() }
@@ -687,7 +687,7 @@ export abstract class QbitBaseAdapter implements BaseAdapter {
 
   async setUploadLimitBatch(hashes: string[], limit: number): Promise<void> {
     // 同 setDownloadLimitBatch：<= 0 视为无限制，发送 0。
-    const raw = typeof limit === 'number' && Number.isFinite(limit) ? limit : 0
+    const raw = Number.isFinite(limit) ? limit : 0
     const normalized = raw <= 0 ? 0 : Math.round(raw)
     await apiClient.post('/api/v2/torrents/setUploadLimit', null, {
       params: { hashes: hashes.join('|') || 'all', limit: normalized.toString() }

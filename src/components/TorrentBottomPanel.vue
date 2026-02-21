@@ -39,26 +39,26 @@ const mutating = ref(false)
 // 当前 Tab
 const activeTab = ref<'overview' | 'files' | 'trackers' | 'peers'>('overview')
 
-const canTorrentAdvancedSwitches = computed(() => capabilities.value.hasTorrentAdvancedSwitches === true)
+const canTorrentAdvancedSwitches = computed(() => capabilities.value.hasTorrentAdvancedSwitches)
 const canAutoManagement = computed(() =>
-  capabilities.value.hasAutoManagement === true && typeof (backendStore.adapter as any)?.setAutoManagement === 'function'
+  capabilities.value.hasAutoManagement && typeof (backendStore.adapter as any)?.setAutoManagement === 'function'
 )
 const canSequentialDownload = computed(() =>
-  capabilities.value.hasSequentialDownload === true && typeof (backendStore.adapter as any)?.setSequentialDownload === 'function'
+  capabilities.value.hasSequentialDownload && typeof (backendStore.adapter as any)?.setSequentialDownload === 'function'
 )
 const canFirstLastPiecePriority = computed(() =>
-  capabilities.value.hasFirstLastPiecePriority === true && typeof (backendStore.adapter as any)?.setFirstLastPiecePriority === 'function'
+  capabilities.value.hasFirstLastPiecePriority && typeof (backendStore.adapter as any)?.setFirstLastPiecePriority === 'function'
 )
 const canSuperSeeding = computed(() =>
-  capabilities.value.hasSuperSeeding === true && typeof (backendStore.adapter as any)?.setSuperSeeding === 'function'
+  capabilities.value.hasSuperSeeding && typeof (backendStore.adapter as any)?.setSuperSeeding === 'function'
 )
 
 const canBandwidthPriority = computed(() =>
-  capabilities.value.hasBandwidthPriority === true && typeof (backendStore.adapter as any)?.setBandwidthPriority === 'function'
+  capabilities.value.hasBandwidthPriority && typeof (backendStore.adapter as any)?.setBandwidthPriority === 'function'
 )
 
-const canTrackerManagement = computed(() => capabilities.value.hasTrackerManagement === true)
-const canPeerManagement = computed(() => capabilities.value.hasPeerManagement === true)
+const canTrackerManagement = computed(() => capabilities.value.hasTrackerManagement)
+const canPeerManagement = computed(() => capabilities.value.hasPeerManagement)
 
 const canRenameFile = computed(() => {
   const fn = (backendStore.adapter as any)?.renameFile

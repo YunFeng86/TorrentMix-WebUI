@@ -236,7 +236,7 @@ function computeLayout() {
     if (!tryAdd(p)) break
   }
   for (const c of candidates) {
-    if (!tryAdd(c)) continue
+    tryAdd(c)
   }
 
   // 如果一个都放不下，至少放第一个（避免只剩更多按钮）

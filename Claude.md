@@ -22,8 +22,8 @@
 
 - **探测逻辑**: 在 main.ts 挂载前，异步请求 `/api/v2/app/version` (qB) 和 `/transmission/rpc` (TR)。
   - 📖 **API 参考**:
-    - [qBittorrent - Get application version](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-application-version)
-    - [Transmission - Session get](../docs/Transmission's%20RPC%20specification(main).md#412-accessors)
+    - [qBittorrent - Get application version](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#get-application-version)
+    - [Transmission - Session get](../docs/Transmission%27s%20RPC%20specification%28main%29.md#412-accessors)
 - **决策**: 根据响应头决定实例化 QbitAdapter 还是 TransAdapter。
 - **依赖注入**: 使用 Vue provide/inject 或 Pinia 将选定的 Adapter 实例注入全局。
 - **PWA (可选)**: 主要用于移动端访问，桃心功能是离线缓存和快捷方式。
@@ -40,15 +40,15 @@
   - 状态统一映射为枚举: `Downloading | Seeding | Paused | Checking | Error | Queued`.
 - **特殊处理**:
   - **qBittorrent**: 处理 sync/maindata 的 RID 和 partial data 合并逻辑。
-    - 📖 **API 文档**: [docs/WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20(qBittorrent%205.0).md) (最新版)
-    - 📖 **历史版本**: [4.1](../docs/WebUI%20API%20(qBittorrent%204.1).md) | [v3.2-v4.0](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md)
+    - 📖 **API 文档**: [docs/WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md) (最新版)
+    - 📖 **历史版本**: [4.1](../docs/WebUI%20API%20%28qBittorrent%204.1%29.md) | [v3.2-v4.0](../docs/WebUI%20API%20%28qBittorrent%20v3.2.0%20v4.0.4%29.md)
     - ⚠️ **最低版本**: 本项目仅支持 qBittorrent WebAPI v2（`/api/v2/*`），即 **v3.2.0+**；v3.1.x 使用旧 `/command/*` + Digest Auth（仓库保留文档仅供参考，不承诺支持）
     - 关键端点: `/api/v2/torrents/info`, `/api/v2/sync/maindata`
     - 状态字段映射参考文档中的 `state` 枚举值
     - **版本检测**: 通过 `/api/v2/app/webapiVersion` 判断 API 版本，适配不同版本的差异
   - **Transmission**: 封装 JSON-RPC body，处理字段过滤 (fields filtering)。
-    - 📖 **API 文档**: [docs/Transmission's RPC specification(main).md](../docs/Transmission's%20RPC%20specification(main).md) (最新版)
-    - 📖 **历史版本**: [4.0.6](../docs/Transmission's%20RPC%20specification(4.0.6).md)
+    - 📖 **API 文档**: [docs/Transmission's RPC specification(main).md](../docs/Transmission%27s%20RPC%20specification%28main%29.md) (最新版)
+    - 📖 **历史版本**: [4.0.6](../docs/Transmission%27s%20RPC%20specification%284.0.6%29.md)
     - 关键方法: `torrent_get`, `torrent_set`, `torrent_add`, `torrent_remove`
     - 状态字段映射参考文档中的 `status` 数值 (0-6)
     - **协议兼容**:
@@ -65,7 +65,7 @@
   - 拦截 403 Forbidden -> 跳转登录页。
   - **注意**: qB的 session cookie 有时效，需要定期检查并重新登录。
   - **CORS 问题**: 需要 qBittorrent 开启跨域支持或使用代理。
-  - 📖 **认证 API**: 参考 [docs/WebUI API (qBittorrent 5.0).md - Authentication](../docs/WebUI%20API%20(qBittorrent%205.0).md#authentication)
+  - 📖 **认证 API**: 参考 [docs/WebUI API (qBittorrent 5.0).md - Authentication](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#authentication)
     - 登录端点: `POST /api/v2/auth/login`
     - 需要设置 `Referer` 或 `Origin` header
     - 返回 SID cookie 用于后续请求认证
@@ -73,7 +73,7 @@
   - **自动 CSRF 握手**: 拦截 409 Conflict -> 提取 header 中的 `X-Transmission-Session-Id` -> 更新 Store (作用域隔离) -> 自动重发原请求。
   - **安全认证**: 使用加密存储或会话内输入，禁止 localStorage 明文存储。
   - **注意**: Session ID 在某些情况下会失效，需要重新获取。
-  - 📖 **CSRF 保护**: 参考 [docs/Transmission's RPC specification(main).md - CSRF protection](../docs/Transmission's%20RPC%20specification(main).md#221-csrf-protection)
+  - 📖 **CSRF 保护**: 参考 [docs/Transmission's RPC specification(main).md - CSRF protection](../docs/Transmission%27s%20RPC%20specification%28main%29.md#221-csrf-protection)
     - 首次请求或 Session 过期返回 409
     - 从响应头提取新的 `X-Transmission-Session-Id`
     - 使用新 Session ID 重试原请求
@@ -112,7 +112,7 @@
 
 ### UnifiedTorrent Interface
 
-```typescript
+```text
 interface UnifiedTorrent {
   id: string;          // qB: hash, TR: id (toString)
   name: string;
@@ -131,7 +131,7 @@ interface UnifiedTorrent {
 
 ### TorrentState Enum
 
-```typescript
+```text
 enum TorrentState {
   Downloading = 'downloading',
   Seeding = 'seeding', 
@@ -408,9 +408,9 @@ src/
 
 | 版本范围 | 文档 | API 特性 |
 |---------|------|---------|
-| **v5.0+** (最新) | [WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20(qBittorrent%205.0).md) | WebAPI v2.11.3+, cookies API, reannounce 支持 |
-| **v4.1.x - v4.6.x** | [WebUI API (qBittorrent 4.1).md](../docs/WebUI%20API%20(qBittorrent%204.1).md) | WebAPI v2.8.3+, torrent rename |
-| **v3.2.x - v4.0.x** | [WebUI API (qBittorrent v3.2.0 v4.0.4).md](../docs/WebUI%20API%20(qBittorrent%20v3.2.0%20v4.0.4).md) | WebAPI v2.0-v2.8, sync/maindata |
+| **v5.0+** (最新) | [WebUI API (qBittorrent 5.0).md](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md) | WebAPI v2.11.3+, cookies API, reannounce 支持 |
+| **v4.1.x - v4.6.x** | [WebUI API (qBittorrent 4.1).md](../docs/WebUI%20API%20%28qBittorrent%204.1%29.md) | WebAPI v2.8.3+, torrent rename |
+| **v3.2.x - v4.0.x** | [WebUI API (qBittorrent v3.2.0 v4.0.4).md](../docs/WebUI%20API%20%28qBittorrent%20v3.2.0%20v4.0.4%29.md) | WebAPI v2.0-v2.8, sync/maindata |
 
 > 注：`docs/WebUI API (qBittorrent v3.1.x).md` 对应旧 WebUI API（`/command/*` + Digest Auth），与 WebAPI v2（`/api/v2/*`）不兼容；仓库保留该文档仅用于对照参考。
 
@@ -435,21 +435,21 @@ if (apiVersion >= 2.11) {
 
 **关键章节**:
 - **Authentication** (`/api/v2/auth/*`)
-  - [Login](../docs/WebUI%20API%20(qBittorrent%205.0).md#login): POST 请求，返回 SID cookie
-  - [Logout](../docs/WebUI%20API%20(qBittorrent%205.0).md#logout): 清除会话
+  - [Login](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#login): POST 请求，返回 SID cookie
+  - [Logout](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#logout): 清除会话
 - **Application** (`/api/v2/app/*`)
-  - [Get application version](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-application-version): `GET /api/v2/app/version`
-  - [Get API version](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-api-version): `GET /api/v2/app/webapiVersion`
+  - [Get application version](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#get-application-version): `GET /api/v2/app/version`
+  - [Get API version](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#get-api-version): `GET /api/v2/app/webapiVersion`
   - 用于后端类型检测和版本兼容性判断
 - **Sync** (`/api/v2/sync/*`)
-  - [Get main data](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-main-data): `GET /api/v2/sync/maindata`
+  - [Get main data](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#get-main-data): `GET /api/v2/sync/maindata`
   - 支持 RID (Replica ID) 机制实现增量更新
   - 返回 `torrents` 数组（只包含变化的种子）
 - **Torrent Management** (`/api/v2/torrents/*`)
-  - [Get torrent list](../docs/WebUI%20API%20(qBittorrent%205.0).md#get-torrent-list): `GET /api/v2/torrents/info`
-  - [Add new torrent](../docs/WebUI%20API%20(qBittorrent%205.0).md#add-new-torrent): `POST /api/v2/torrents/add`
-  - [Pause/Resume torrents](../docs/WebUI%20API%20(qBittorrent%205.0).md#pause-torrents): POST `/pause` / `/resume`
-  - [Delete torrents](../docs/WebUI%20API%20(qBittorrent%205.0).md#delete-torrents): `POST /api/v2/torrents/delete`
+  - [Get torrent list](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#get-torrent-list): `GET /api/v2/torrents/info`
+  - [Add new torrent](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#add-new-torrent): `POST /api/v2/torrents/add`
+  - [Pause/Resume torrents](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#pause-torrents): POST `/pause` / `/resume`
+  - [Delete torrents](../docs/WebUI%20API%20%28qBittorrent%205.0%29.md#delete-torrents): `POST /api/v2/torrents/delete`
 
 **状态映射**: 参考 API 返回的 `state` 字段，映射到统一的 `TorrentState` 枚举
 ```
@@ -471,8 +471,8 @@ error -> Error
 
 | 版本范围 | 文档 | 协议特性 |
 |---------|------|---------|
-| **v4.1.0+** (最新) | [Transmission's RPC specification(main).md](../docs/Transmission's%20RPC%20specification(main).md) | JSON-RPC 2.0, snake_case, rpc_version_semver |
-| **v2.80 - v4.0.x** | [Transmission's RPC specification(4.0.6).md](../docs/Transmission's%20RPC%20specification(4.0.6).md) | 旧协议 (kebab-case/camelCase) |
+| **v4.1.0+** (最新) | [Transmission's RPC specification(main).md](../docs/Transmission%27s%20RPC%20specification%28main%29.md) | JSON-RPC 2.0, snake_case, rpc_version_semver |
+| **v2.80 - v4.0.x** | [Transmission's RPC specification(4.0.6).md](../docs/Transmission%27s%20RPC%20specification%284.0.6%29.md) | 旧协议 (kebab-case/camelCase) |
 
 **版本检测方法**:
 ```typescript
@@ -480,23 +480,18 @@ error -> Error
 // X-Transmission-Rpc-Version: 6.0.0 (Transmission 4.1.0+)
 
 // 2. 或者通过 session_get 获取版本
-{
-  "method": "session_get",
-  "jsonrpc": "2.0",
-  "id": 1
+const sessionGet = {
+  jsonrpc: '2.0',
+  method: 'session_get',
+  id: 1,
 }
-// 响应中的 rpc_version_semver: "6.0.0"
+// 响应中的 rpc_version_semver: '6.0.0'
 
-// 3. 判断协议版本
-if (rpc_version_semver >= "6.0.0") {
-  // 使用 JSON-RPC 2.0 + snake_case
-  method: "torrent_get"
-  params: { fields: ["id", "name"] }
-} else {
-  // 使用旧协议 (camelCase/kebab-case 混用)
-  method: "torrent-get"
-  arguments: { fields: ["id", "name"] }
-}
+// 3. 根据版本选择协议
+const isJsonRpc2 = rpc_version_semver >= '6.0.0'
+const request = isJsonRpc2
+  ? { jsonrpc: '2.0', method: 'torrent_get', params: { fields: ['id', 'name'] }, id: 1 }
+  : { method: 'torrent-get', arguments: { fields: ['id', 'name'] }, tag: 1 }
 ```
 
 **协议差异**:
@@ -538,15 +533,15 @@ if (rpc_version_semver >= "6.0.0") {
   - 从响应头提取 `X-Transmission-Session-Id`
   - 重试原请求时带上该 header
 - **Torrent Requests**
-  - [torrent_get](../docs/Transmission's%20RPC%20specification(main).md#33-torrent-accessor-torrent_get): 获取种子列表和详细信息
+  - [torrent_get](../docs/Transmission%27s%20RPC%20specification%28main%29.md#33-torrent-accessor-torrent_get): 获取种子列表和详细信息
     - 支持字段过滤 (`fields` 参数) 减少响应体积
     - 支持 `ids` 过滤特定种子
-  - [torrent_add](../docs/Transmission's%20RPC%20specification(main).md#34-adding-a-torrent): 添加种子
-  - [torrent_remove](../docs/Transmission's%20RPC%20specification(main).md#35-removing-a-torrent): 删除种子
-  - [torrent_start/stop](../docs/Transmission's%20RPC%20specification(main).md#31-torrent-action-requests): 控制种子启停
-  - [torrent_set](../docs/Transmission's%20RPC%20specification(main).md#32-torrent-mutator-torrent_set): 修改种子属性
+  - [torrent_add](../docs/Transmission%27s%20RPC%20specification%28main%29.md#34-adding-a-torrent): 添加种子
+  - [torrent_remove](../docs/Transmission%27s%20RPC%20specification%28main%29.md#35-removing-a-torrent): 删除种子
+  - [torrent_start/stop](../docs/Transmission%27s%20RPC%20specification%28main%29.md#31-torrent-action-requests): 控制种子启停
+  - [torrent_set](../docs/Transmission%27s%20RPC%20specification%28main%29.md#32-torrent-mutator-torrent_set): 修改种子属性
 - **Session Requests**
-  - [session_get](../docs/Transmission's%20RPC%20specification(main).md#412-accessors): 获取会话信息和版本
+  - [session_get](../docs/Transmission%27s%20RPC%20specification%28main%29.md#412-accessors): 获取会话信息和版本
     - `rpc_version_semver`: API 版本（如 "6.0.0"）
     - `version`: Transmission 版本字符串
 
@@ -567,7 +562,7 @@ if (rpc_version_semver >= "6.0.0") {
 
 **Module 1: App Bootstrap** 实现后端类型和版本自动检测:
 
-```typescript
+```text
 // 推测流程 (参考 Module 1 职责描述)
 interface BackendInfo {
   type: 'qBittorrent' | 'Transmission' | null

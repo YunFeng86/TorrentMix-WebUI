@@ -540,11 +540,3 @@ function parseVersion(version: string): { major: number; minor: number; patch: n
   }
   return { major: 4, minor: 0, patch: 0 }
 }
-
-/**
- * 探测后端类型（保留向后兼容）
- */
-export async function detectBackend(timeout = 3000): Promise<BackendType> {
-  const result = await detectBackendWithVersion(timeout)
-  return result.type
-}

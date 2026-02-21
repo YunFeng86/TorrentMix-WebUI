@@ -201,7 +201,7 @@ Response arguments:
    torrents.
 
 Note: For more information on what these fields mean, see the comments
-in [libtransmission/transmission.h](../libtransmission/transmission.h).
+in [libtransmission/transmission.h](https://github.com/transmission/transmission/blob/4.0.6/libtransmission/transmission.h).
 The 'source' column here corresponds to the data structure there.
 
 | Key                       | Value Type         | transmission.h source                                        |

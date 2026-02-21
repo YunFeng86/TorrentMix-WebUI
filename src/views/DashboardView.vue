@@ -604,7 +604,7 @@ async function handleDelete() {
 
 async function logout() {
   await authStore.logout()
-  router.replace('/login')
+  await router.replace('/login')
 }
 
 // 添加种子
@@ -1034,7 +1034,7 @@ onUnmounted(() => {
                             type="text"
                             placeholder="搜索种子名称..."
                             class="input pl-10 py-2"
-                            @keydown.escape="closeSearchPopover"
+                            @keydown.esc="closeSearchPopover"
                           />
                         </div>
                         <button @click="closeSearchPopover" class="icon-btn" title="关闭搜索">
@@ -1099,7 +1099,7 @@ onUnmounted(() => {
                               type="text"
                               placeholder="搜索种子名称..."
                               class="input pl-10 py-2"
-                              @keydown.escape="closeSearchPopover"
+                              @keydown.esc="closeSearchPopover"
                             />
                           </div>
                           <button @click="closeSearchPopover" class="icon-btn" title="关闭搜索">

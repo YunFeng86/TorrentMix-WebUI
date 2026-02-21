@@ -133,7 +133,7 @@ export function useTorrentContext() {
     if (b.state === 'downloading' && a.state !== 'downloading') return 1
 
     const key = uiState.sortBy
-    let compare = 0
+    let compare: number
 
     if (key === 'name') {
       compare = a.name.localeCompare(b.name, 'zh-CN')

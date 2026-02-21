@@ -14,14 +14,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
+        # noinspection UndefinedAction
         uses: actions/checkout@v4
         with:
+          # noinspection UndefinedParamsPresent
           fetch-depth: 0
 
       - name: Setup Node
+        # noinspection UndefinedAction
         uses: actions/setup-node@v4
         with:
+          # noinspection UndefinedParamsPresent
           node-version: 20
+          # noinspection UndefinedParamsPresent
           cache: npm
 
       - name: Install
@@ -44,9 +49,12 @@ jobs:
         run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
+        # noinspection UndefinedAction
         uses: softprops/action-gh-release@v2
         with:
+          # noinspection UndefinedParamsPresent
           generate_release_notes: true
+          # noinspection UndefinedParamsPresent
           files: |
             artifacts/publish/latest.json
             artifacts/publish/manifest.json

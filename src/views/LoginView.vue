@@ -35,7 +35,7 @@ async function handleSubmit() {
   try {
     await authStore.login(username.value, password.value)
     password.value = ''
-    router.push('/')
+    await router.push('/')
   } catch {
     error.value = isTransmission.value
       ? '连接失败，请检查连接地址或凭证配置'
@@ -118,7 +118,7 @@ function getBackendName(): string {
             :disabled="loading || detecting"
             class="btn-primary w-full py-2.5 font-medium transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <div class="flex items-center justify-center gap-2">
+            <span class="flex items-center justify-center gap-2">
               <Icon v-if="loading" name="loader-2" :size="16" class="animate-spin text-white" />
               {{
                 loading
@@ -127,7 +127,7 @@ function getBackendName(): string {
                     ? '检测中...'
                     : (isTransmission ? '连接' : '登录')
               }}
-            </div>
+            </span>
           </button>
         </form>
       </div>

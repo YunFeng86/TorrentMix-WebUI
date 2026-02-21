@@ -421,10 +421,7 @@ export class TransAdapter implements BaseAdapter {
   private async refreshTransferSettingsCache(): Promise<TransferSettings> {
     if (this.transferSettingsRefreshPromise) return this.transferSettingsRefreshPromise
 
-    this.transferSettingsRefreshPromise = (async () => {
-      const settings = await this.getTransferSettings()
-      return settings
-    })()
+    this.transferSettingsRefreshPromise = this.getTransferSettings()
 
     try {
       return await this.transferSettingsRefreshPromise

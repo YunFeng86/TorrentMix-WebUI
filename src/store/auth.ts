@@ -5,7 +5,7 @@ import type { BaseAdapter } from '@/adapter/interface'
 import { detectBackendTypeOnly, detectBackendWithVersionAuth, type BackendType, type BackendVersion } from '@/adapter/detect'
 import { createAdapterByType, saveVersionCache, clearVersionCache, createAdapter, rebootAdapterWithAuth, resolveQbitFeatures } from '@/adapter/factory'
 import { QbitAdapter, DEFAULT_QBIT_FEATURES } from '@/adapter/qbit'
-import { TransAdapter } from '@/adapter/trans/index'
+import { TransAdapter } from '@/adapter/trans'
 
 const isDev = Boolean((import.meta as any).env?.DEV)
 function debugLog(...args: unknown[]) {

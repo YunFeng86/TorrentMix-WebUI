@@ -132,11 +132,6 @@
     @apply border-b-0;
   }
   
-  /* 高密度布局 */
-  .dense {
-    @apply text-xs leading-tight;
-  }
-  
   /* 状态标签 */
   .status-badge {
     @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;

@@ -7,6 +7,10 @@ export default defineConfig(({ command }) => ({
   // 生产构建使用相对 base，保证部署在子路径（例如 /transmission/web/）也能正确加载静态资源。
   base: command === 'build' ? './' : '/',
   plugins: [vue()],
+  build: {
+    // 生成 Vite manifest，供发布脚本稳定解析入口产物（避免对 index.html 结构产生隐式依赖）。
+    manifest: true,
+  },
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src')

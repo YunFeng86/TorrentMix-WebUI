@@ -101,10 +101,10 @@ onClickOutside(rootRef, () => {
         :class="{ 'opacity-50 cursor-not-allowed': disabled }"
       >
         <Icon :name="item.icon" :size="16" class="shrink-0 text-gray-500" />
-        <div class="flex-1 text-left">
-          <div class="font-medium">{{ item.label }}</div>
-          <div class="text-xs text-gray-500">{{ item.description }}</div>
-        </div>
+        <span class="flex-1 text-left">
+          <span class="font-medium block">{{ item.label }}</span>
+          <span class="text-xs text-gray-500 block">{{ item.description }}</span>
+        </span>
       </button>
     </div>
   </div>

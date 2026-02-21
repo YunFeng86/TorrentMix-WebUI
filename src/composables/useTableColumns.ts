@@ -97,8 +97,7 @@ export function useTableColumns(tableId: string, definitions: ColumnDefinition[]
       for (const snapshot of snapshots) {
         const column = columns.value.find(c => c.id === snapshot.id)
         if (!column) continue
-        const nextWidth = Math.max(column.minWidth, snapshot.width)
-        column.currentWidth = nextWidth
+        column.currentWidth = Math.max(column.minWidth, snapshot.width)
       }
     }
 

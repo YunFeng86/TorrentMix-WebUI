@@ -123,11 +123,15 @@ async function installOnce() {
   unzip(zipPath, extractDir)
 
   // 解压后的结构：根目录应包含 index.html
+  const indexPath = path.join(extractDir, 'index.html')
+  let indexStat
   try {
-    const stat = await fs.stat(path.join(extractDir, 'index.html'))
-    if (!stat.isFile()) throw new Error('index.html is not a file')
+    indexStat = await fs.stat(indexPath)
   } catch {
     throw new Error('invalid zip: index.html not found at root')
+  }
+  if (!indexStat.isFile()) {
+    throw new Error('invalid zip: index.html is not a file')
   }
 
   console.log(`[sidecar] installing to ${TARGET_DIR}`)
@@ -152,16 +156,25 @@ async function main() {
     return
   }
 
-  while (true) {
+  let stopped = false
+  const stop = (signal) => {
+    if (stopped) return
+    stopped = true
+    console.log(`[sidecar] ${signal} received, stopping…`)
+  }
+  process.on('SIGTERM', () => stop('SIGTERM'))
+  process.on('SIGINT', () => stop('SIGINT'))
+
+  while (!stopped) {
     try {
       await installOnce()
     } catch (err) {
       console.error('[sidecar] update failed:', err?.stack || err?.message || err)
     }
 
+    if (stopped) break
     await sleep(CHECK_INTERVAL_SEC * 1000)
   }
 }
 
 await main()
-

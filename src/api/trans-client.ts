@@ -5,11 +5,10 @@ import axios from 'axios'
  *
  * 特殊处理：
  * - 自动处理 409 Conflict，提取 X-Transmission-Session-Id 并重试
- * - Session ID 按实例隔离
+ * - Session ID 存在 axios instance 上（当前导出为单例）
  */
 
-// Session ID 存储（按实例作用域隔离）
-let sessionId = ''
+// TODO: 若未来需要同时管理多个 Transmission 实例，请将 transClient 改为工厂函数，确保 Session-Id / auth 按后端隔离。
 
 function getConfiguredTransBaseUrl(): string {
   // `import.meta.env` is Vite-specific; guard it for non-Vite runtimes (e.g. Node tests).
@@ -23,10 +22,6 @@ function getConfiguredTransBaseUrl(): string {
   return configured || '/transmission/rpc'
 }
 
-export function getTransmissionBaseUrl(): string {
-  return getConfiguredTransBaseUrl()
-}
-
 const baseURL = getConfiguredTransBaseUrl()
 
 export const transClient = axios.create({
@@ -37,15 +32,6 @@ export const transClient = axios.create({
   }
 })
 
-/**
- * 设置 Session ID
- * 用于从外部（如探测逻辑）设置已获取的 Session ID
- */
-export function setTransmissionSessionId(id: string) {
-  sessionId = id
-  transClient.defaults.headers['X-Transmission-Session-Id'] = id
-}
-
 // 响应拦截器：处理 409 Conflict
 transClient.interceptors.response.use(
   response => response,
@@ -55,8 +41,9 @@ transClient.interceptors.response.use(
 
     if (is409 && hasSessionIdHeader) {
       // 提取新的 Session ID
-      sessionId = error.response.headers['x-transmission-session-id']
-      transClient.defaults.headers['X-Transmission-Session-Id'] = sessionId
+      transClient.defaults.headers['X-Transmission-Session-Id'] = String(
+        error.response.headers['x-transmission-session-id'],
+      )
 
       // 重试原请求
       return transClient.request(error.config)

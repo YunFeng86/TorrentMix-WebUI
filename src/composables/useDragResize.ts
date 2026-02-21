@@ -96,8 +96,7 @@ export function useDragResize(options: DragResizeOptions) {
     if (!isResizing.value) return
 
     // 向上拖拽为正
-    const deltaY = startY.value - clientY
-    pendingDeltaY = deltaY
+    pendingDeltaY = startY.value - clientY
 
     // 使用 RAF 确保每帧只更新一次
     if (rafId === null) {
@@ -135,8 +134,7 @@ export function useDragResize(options: DragResizeOptions) {
     const clampedHeight = Math.max(minHeight, Math.min(maxHeight, rawHeight))
 
     // 计算需要多少 transform 才能达到目标高度
-    const heightDelta = clampedHeight - displayHeight.value
-    transformOffset.value = heightDelta
+    transformOffset.value = clampedHeight - displayHeight.value
   }
 
   /**

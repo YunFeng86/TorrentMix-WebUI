@@ -93,8 +93,7 @@ export function usePolling(options: PollingOptions): PollingController {
     failureCount.value++
 
     // 指数退避
-    const nextInterval = Math.min(baseInterval * 2 ** failureCount.value, maxInterval)
-    currentInterval.value = nextInterval
+    currentInterval.value = Math.min(baseInterval * 2 ** failureCount.value, maxInterval)
 
     // 达到熔断阈值
     if (failureCount.value >= circuitBreakerThreshold) {
@@ -165,7 +164,7 @@ export function usePolling(options: PollingOptions): PollingController {
     if (isPolling.value) return
 
     isPolling.value = true
-    tick() // 立即执行一次
+    void tick() // 立即执行一次
   }
 
   /**
@@ -196,7 +195,7 @@ export function usePolling(options: PollingOptions): PollingController {
         isPaused = false
         // 页面恢复时立即执行一次
         if (isPolling.value) {
-          tick()
+          void tick()
         }
       }
     }

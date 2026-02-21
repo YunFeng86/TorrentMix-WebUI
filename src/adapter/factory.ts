@@ -97,21 +97,12 @@ export async function createAdapterByType(
   }
 }
 
-export async function refreshVersion(): Promise<BackendVersion> {
-  const version = await detectBackendWithVersion()
-  if (!version.isUnknown) {
-    saveVersionCache(version)
-  }
-  return version
-}
-
 function loadVersionCache(): CachedVersion | null {
   return versionCache
 }
 
 export function saveVersionCache(version: BackendVersion): void {
-  const cached: CachedVersion = { ...version, timestamp: Date.now() }
-  versionCache = cached
+  versionCache = { ...version, timestamp: Date.now() }
 }
 
 export function clearVersionCache(): void {

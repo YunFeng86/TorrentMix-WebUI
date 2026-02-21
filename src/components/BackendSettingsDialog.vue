@@ -102,9 +102,10 @@ function stableStringify(input: unknown) {
 
 const isDirty = computed(() => {
   if (!initialTransferForm.value || !initialPrefsForm.value) return false
-  if (stableStringify(transferForm.value) !== stableStringify(initialTransferForm.value)) return true
-  if (stableStringify(prefsForm.value) !== stableStringify(initialPrefsForm.value)) return true
-  return false
+  return (
+    stableStringify(transferForm.value) !== stableStringify(initialTransferForm.value) ||
+    stableStringify(prefsForm.value) !== stableStringify(initialPrefsForm.value)
+  )
 })
 
 function isFiniteNumber(val: unknown): val is number {

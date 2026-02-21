@@ -111,8 +111,7 @@ export const iconRegistry = {
   'zap': Zap,
 } as const satisfies Record<string, VueComponent>
 
-export type RegistryIconName = keyof typeof iconRegistry
-export type IconName = RegistryIconName
+type RegistryIconName = keyof typeof iconRegistry
 
 export const fallbackIcon: VueComponent = HelpCircle
 
@@ -123,7 +122,7 @@ function isDev(): boolean {
   return (import.meta as any).env?.DEV === true
 }
 
-export function getIconComponent(name: string): VueComponent {
+export function getIconComponent(name: RegistryIconName | string): VueComponent {
   const icon = (iconRegistry as Record<string, VueComponent>)[name]
   if (icon) return icon
 

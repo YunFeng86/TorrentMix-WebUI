@@ -69,7 +69,7 @@ router.beforeEach(async (to) => {
 router.onError((error) => {
   if (error instanceof AuthError) {
     clearAuthState()
-    router.replace('/login')
+    void router.replace('/login')
   }
 })
 
