@@ -20,6 +20,7 @@ coverage/
 *.tsbuildinfo
 .eslintcache
 .stylelintcache
+artifacts/
 
 # Environment files & local overrides
 .env

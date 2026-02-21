@@ -2,12 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* 本地字体定义 */
+/* 本地字体定义（由 Vite 处理并带 hash 输出，支持子路径部署） */
 @layer base {
   /* Inter 可变字体 (开源: SIL Open Font License) */
   @font-face {
     font-family: 'Inter';
-    src: url('/fonts/inter.ttf') format('truetype');
+    src: url('./assets/fonts/inter.ttf') format('truetype');
     font-weight: 100 900;
     font-display: swap;
     font-style: normal;
@@ -16,7 +16,7 @@
   /* JetBrains Mono 可变字体 (开源: OFL) */
   @font-face {
     font-family: 'JetBrains Mono';
-    src: url('/fonts/jetbrains-mono.ttf') format('truetype');
+    src: url('./assets/fonts/jetbrains-mono.ttf') format('truetype');
     font-weight: 100 800;
     font-display: swap;
     font-style: normal;

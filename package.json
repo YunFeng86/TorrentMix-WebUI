@@ -1,11 +1,12 @@
 {
-  "name": "webui-temp",
+  "name": "torrent-webui",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
+    "build:publish": "node ./scripts/release/build-publish.mjs",
     "test": "node --experimental-strip-types --test --import ./tests/register-loader.mjs tests/*.test.ts",
     "lint": "eslint . --ext .js,.mjs,.cjs,.ts,.vue",
     "preview": "vite preview"

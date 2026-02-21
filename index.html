@@ -2,19 +2,19 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- Content Security Policy -->
-    <!-- 开发环境：允许 localhost 和内联样式 -->
-    <!-- 生产环境：应该替换为具体后端 Origin，移除 'unsafe-inline' -->
+    <!-- 提示：若需要跨域连接后端（不推荐），请在部署层/此处显式放通 connect-src 对应 Origin。 -->
+    <!-- 生产环境：建议替换为更严格的 CSP，并评估是否能移除 'unsafe-inline'。 -->
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'self';
                script-src 'self';
                style-src 'self' 'unsafe-inline';
                font-src 'self';
                img-src 'self' data:;
-               connect-src 'self' http://localhost:* https:;">
+               connect-src 'self';">
     <title>Torrent WebUI</title>
   </head>
   <body>

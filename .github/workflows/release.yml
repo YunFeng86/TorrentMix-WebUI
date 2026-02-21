@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Install zip (Linux)
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Test
+        run: npm test
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build publish artifacts
+        run: npm run build:publish
+
+      - name: Read version
+        id: meta
+        run: echo "version=$(node -p \"require('./package.json').version\")" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/publish/latest.json
+            artifacts/publish/manifest.json
+            artifacts/publish/loader.html
+            artifacts/publish/portable.html
+            artifacts/publish/releases/${{ steps.meta.outputs.version }}/manifest.json
+            artifacts/publish/releases/${{ steps.meta.outputs.version }}/loader.html
+            artifacts/publish/releases/${{ steps.meta.outputs.version }}/portable.html
+            artifacts/publish/releases/${{ steps.meta.outputs.version }}/full-dist.zip
+
+      - name: Publish to gh-pages (latest.json + releases/)
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p gh-pages
+          cd gh-pages
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPO}.git"
+
+          git fetch origin gh-pages --depth=1 || true
+          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
+            git checkout -B gh-pages origin/gh-pages
+          else
+            git checkout --orphan gh-pages
+          fi
+
+          mkdir -p releases
+          rm -rf "releases/${VERSION}"
+          cp -R "../artifacts/publish/releases/${VERSION}" "releases/${VERSION}"
+
+          cp "../artifacts/publish/latest.json" "./latest.json"
+          cp "../artifacts/publish/manifest.json" "./manifest.json"
+          cp "../artifacts/publish/loader.html" "./loader.html"
+          cp "../artifacts/publish/portable.html" "./portable.html"
+
+          touch .nojekyll
+
+          git add -A
+          git commit -m "chore: publish ${VERSION}" || echo "No changes to commit"
+          git push origin gh-pages
