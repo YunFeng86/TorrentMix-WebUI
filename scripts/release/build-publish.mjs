@@ -187,11 +187,31 @@ function deriveGhPagesLatestUrl(repoFullName) {
   return `https://${owner}.github.io/${repo}/latest.json`
 }
 
+function tryDeriveRepoFromGitRemote() {
+  try {
+    const origin = runCapture('git config --get remote.origin.url')
+    if (!origin) return ''
+
+    // https://github.com/OWNER/REPO.git
+    const https = origin.match(/^https:\/\/github\.com\/([^/]+)\/([^/]+?)(?:\.git)?$/i)
+    if (https) return `${https[1]}/${https[2]}`
+
+    // git@github.com:OWNER/REPO.git
+    const ssh = origin.match(/^git@github\.com:([^/]+)\/([^/]+?)(?:\.git)?$/i)
+    if (ssh) return `${ssh[1]}/${ssh[2]}`
+  } catch {}
+  return ''
+}
+
+function deriveRepoFullName() {
+  return String(process.env.GITHUB_REPOSITORY || '').trim() || tryDeriveRepoFromGitRemote()
+}
+
 function deriveDefaultLatestCandidates() {
   const explicit = String(process.env.DEFAULT_LATEST_URL || '').trim()
   if (explicit) return [explicit]
 
-  const repo = String(process.env.GITHUB_REPOSITORY || '').trim()
+  const repo = deriveRepoFullName()
   if (!repo) return []
 
   const ghPages = deriveGhPagesLatestUrl(repo)
@@ -201,9 +221,6 @@ function deriveDefaultLatestCandidates() {
 }
 
 function buildLoaderHtml() {
-  // 这是“方案 A”的最小 Loader：默认尝试同目录的 manifest/latest，失败则提示用户配置远端 latest.json。
-  // 注意：浏览器端无法可靠判断“目录是否可写”；不要在这里玩玄学。
-  // noinspection JSAnnotator
   const defaultCandidates = deriveDefaultLatestCandidates()
   return `<!doctype html>
 <html lang="zh-CN">
@@ -212,7 +229,7 @@ function buildLoaderHtml() {
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy"
       content="default-src 'self';
-               script-src 'self' https:;
+               script-src 'self' 'unsafe-inline' https:;
                style-src 'self' 'unsafe-inline' https:;
                img-src 'self' data:;
                connect-src 'self' https:;
@@ -237,22 +254,24 @@ function buildLoaderHtml() {
     </style>
   </head>
   <body>
-    <div class="wrap">
-      <div class="card">
-        <h1>WebUI Loader</h1>
-        <p>用途：把这一页当作 <code>index.html</code> 放到 qBittorrent/Transmission 的 WebUI 目录里，页面会从远端的 <code>latest.json</code> 拉取最新版资源。</p>
-        <div class="warn">
-          安全提示：启用“远端更新”本质是在信任远端脚本。建议使用自建域名/私有源，并配合完整 HTTPS、严格 CSP、以及可审计的发布流程。
-        </div>
+    <div id="app">
+      <div class="wrap">
+        <div class="card">
+          <h1>WebUI Loader</h1>
+          <p>用途：把这一页当作 <code>index.html</code> 放到 qBittorrent/Transmission 的 WebUI 目录里；它会从远端 <code>latest.json</code> 读取版本，再按 <code>manifest.json</code> 从 CDN 加载 JS/CSS（页面保持同源，后端 API 仍访问当前域名）。</p>
+          <div class="warn">
+            安全提示：启用“远端更新”本质是在信任远端脚本。建议使用自建域名/私有源，并配合完整 HTTPS、严格 CSP、以及可审计的发布流程。
+          </div>
 
-        <div class="row">
-          <input id="manifestUrl" placeholder="latest.json URL（例如 https://YOUR.DOMAIN/latest.json）" />
-          <button id="saveBtn" class="secondary" type="button">保存</button>
-          <button id="loadBtn" type="button">加载</button>
-        </div>
+          <div class="row">
+            <input id="manifestUrl" placeholder="latest.json URL（例如 https://YOUR.DOMAIN/latest.json）" />
+            <button id="saveBtn" class="secondary" type="button">保存</button>
+            <button id="loadBtn" type="button">加载</button>
+          </div>
 
-        <div class="status" id="status">状态：等待配置</div>
-        <div class="err" id="error" style="display:none"></div>
+          <div class="status" id="status">状态：等待配置</div>
+          <div class="err" id="error" style="display:none"></div>
+        </div>
       </div>
     </div>
 
@@ -287,8 +306,8 @@ function buildLoaderHtml() {
         const fromQuery = qs.get('latest') || qs.get('manifest') || ''
         const saved = localStorage.getItem(STORAGE_KEY) || ''
 
-        // 默认尝试同目录：在 GitHub Pages / 本地静态目录里直接打开 loader.html 也能跑起来
-        const defaults = ['./latest.json', './manifest.json']
+        // 默认尝试同目录：在本地静态目录里直接打开 loader.html 也能跑起来
+        const defaults = ['./latest.json']
 
         return [fromQuery, saved, ...DEFAULT_CANDIDATES, ...defaults]
           .map(s => String(s || '').trim())
@@ -307,8 +326,28 @@ function buildLoaderHtml() {
         }
       }
 
-      async function resolveManifest(latestUrlOrManifestUrl) {
+      function normalizePinnedVersion(ver) {
+        const v = String(ver || '').trim()
+        if (!v) return ''
+        return v.startsWith('v') ? v.slice(1) : v
+      }
+
+      async function resolveManifest(latestUrlOrManifestUrl, pinnedVersion) {
         const u = new URL(latestUrlOrManifestUrl, location.href)
+
+        // 固定版本：直接从同源“CDN 根”下的 releases/<ver>/manifest.json 读取
+        if (pinnedVersion) {
+          // 允许直接给 manifest.json（调试/私有源）
+          if (u.pathname.endsWith('.json') && u.pathname.toLowerCase().endsWith('manifest.json')) {
+            const manifest = await fetchJson(u.toString())
+            return { manifest, manifestUrl: u.toString() }
+          }
+
+          const manifestUrl = new URL('releases/' + pinnedVersion + '/manifest.json', u).toString()
+          const manifest = await fetchJson(manifestUrl)
+          return { manifest, manifestUrl }
+        }
+
         const data = await fetchJson(u.toString())
 
         // 兼容：直接给 manifest.json
@@ -381,19 +420,28 @@ function buildLoaderHtml() {
 
       async function tryBoot() {
         setError('')
+
+        const qs = new URLSearchParams(location.search)
+        const pinnedVersion = normalizePinnedVersion(qs.get('ver') || qs.get('version') || qs.get('tag') || '')
+
         const candidates = pickCandidates()
         if (candidates.length === 0) {
           setStatus('未配置 latest.json；请手动填写并保存')
           return
         }
 
-        setStatus('探测更新源…')
+        if (pinnedVersion) {
+          setStatus('固定版本：' + pinnedVersion + '（探测 CDN）…')
+        } else {
+          setStatus('探测更新源…')
+        }
+
         let lastErr = null
         for (const url of candidates) {
           try {
             setStatus('读取：' + url)
-            const { manifest, manifestUrl } = await resolveManifest(url)
-            setStatus('加载资源：' + (manifest?.version || 'unknown'))
+            const { manifest, manifestUrl } = await resolveManifest(url, pinnedVersion)
+            setStatus('加载资源：' + (manifest?.version || pinnedVersion || 'unknown'))
             loadAssets(manifestUrl, manifest)
             return
           } catch (e) {
@@ -549,6 +597,8 @@ async function main() {
   await fs.rename(tmpZip, path.join(releaseDir, 'full-dist.zip'))
 
   console.log('[publish] write latest.json…')
+  const portableBuf = await fs.readFile(path.join(releaseDir, 'portable.html'))
+  const portableSha256 = sha256Hex(portableBuf)
   const latest = {
     schema: 1,
     name,
@@ -557,12 +607,15 @@ async function main() {
     commit,
     builtAt: builtAtIso,
     release: {
+      // A 模式（Loader）专用：latest.json 作为 CDN 入口，后续资产按 releases/<version>/manifest.json 从同一 CDN 读取。
+      // 注意：保持 distZip 为相对 latest.json 的路径，方便 sidecar 等工具复用。
       path: `releases/${version}/`,
-      manifest: `releases/${version}/manifest.json`,
-      loader: `releases/${version}/loader.html`,
-      portable: `releases/${version}/portable.html`,
+      manifest: 'manifest.json',
+      loader: 'loader.html',
+      portable: 'portable.html',
       distZip: `releases/${version}/full-dist.zip`,
       distZipSha256: zipSha256,
+      portableSha256,
     },
   }
   await fs.writeFile(path.join(OUT_DIR, 'latest.json'), JSON.stringify(latest, null, 2) + '\n', 'utf8')

@@ -1,0 +1,22 @@
+{
+  "defaultServerId": "home-qb",
+  "servers": [
+    {
+      "id": "home-qb",
+      "name": "Home qBittorrent",
+      "type": "qbit",
+      "baseUrl": "http://qbittorrent:8080",
+      "username": "admin",
+      "password": "adminadmin"
+    },
+    {
+      "id": "seedbox-tr",
+      "name": "Seedbox Transmission",
+      "type": "trans",
+      "baseUrl": "http://transmission:9091",
+      "username": "user",
+      "password": "pass"
+    }
+  ]
+}
+

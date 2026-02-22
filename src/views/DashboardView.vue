@@ -30,6 +30,7 @@ import TorrentContextMenu from '@/components/torrent/contextmenu/TorrentContextM
 import { formatSpeed, formatBytes } from '@/utils/format'
 import SafeText from '@/components/SafeText.vue'
 import QueueMenu from '@/components/toolbar/QueueMenu.vue'
+import ServerSwitchMenu from '@/components/toolbar/ServerSwitchMenu.vue'
 
 // 虚拟滚动阈值：超过 200 个种子时启用虚拟滚动（性能优化）
 const VIRTUAL_SCROLL_THRESHOLD = 200
@@ -1060,6 +1061,8 @@ onUnmounted(() => {
                 <span class="text-xs text-gray-500 max-w-[5rem] truncate">{{ connectionLabel }}</span>
               </div>
 
+              <ServerSwitchMenu />
+
               <button v-if="authStore.isSecuredConnection" @click="logout" class="icon-btn" title="退出登录">
                 <Icon name="log-out" :size="16" />
               </button>
@@ -1113,6 +1116,8 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
+
+                <ServerSwitchMenu />
 
                 <button v-if="authStore.isSecuredConnection" @click="logout" class="icon-btn" title="退出登录">
                   <Icon name="log-out" :size="16" />

@@ -16,11 +16,15 @@ node_modules.win-bak-*/
 dist/
 dist-ssr/
 .vite/
+target/
 coverage/
 *.tsbuildinfo
 .eslintcache
 .stylelintcache
 artifacts/
+
+# Tauri generated files
+**/src-tauri/gen/
 
 # Environment files & local overrides
 .env

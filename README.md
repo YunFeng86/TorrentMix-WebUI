@@ -1,104 +1,173 @@
-# Torrent WebUI（qBittorrent / Transmission）
+<div align="center">
 
-一个第三方下载器 WebUI：同一套前端代码，适配 qBittorrent（WebAPI v2, v3.2.0+）与 Transmission（RPC，全版本尽量兼容）。
+# TorrentMix WebUI
 
-核心目标就一个：**部署方式别折腾用户**。所以仓库同时支持 4 种分发形态（见下文 A/B/C/D）。
+**One frontend. Two backends. Zero compromise.**
 
-## 功能概览
+[![Build](https://img.shields.io/github/actions/workflow/status/YunFeng86/TorrentMix-WebUI/release.yml?style=flat-square&label=build)](../../actions) [![Release](https://img.shields.io/github/v/release/YunFeng86/TorrentMix-WebUI?style=flat-square)](../../releases/latest) [![License](https://img.shields.io/github/license/YunFeng86/TorrentMix-WebUI?style=flat-square)](LICENSE) [![Vue](https://img.shields.io/badge/Vue-3.5-42b883?style=flat-square&logo=vue.js)](https://vuejs.org/) [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178c6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 
-- 自动探测后端类型与版本（qB / Transmission）
-- Adapter 层归一化数据模型（UI 不关心后端差异）
-- 种子列表：支持虚拟滚动（大列表性能）
-- 登录/连接：qB cookie session、Transmission Basic Auth + 409 Session-Id 自动握手
+[Getting Started](#getting-started) · [Deployment](#deployment) · [Local Development](#local-development) · [Contributing](#contributing)
 
-## 本地开发
+[中文文档](README.zh-CN.md)
+
+</div>
+
+---
+
+A third-party downloader WebUI that works with both **qBittorrent** (WebAPI v2, v3.2.0+) and **Transmission** (RPC, all versions) — from a single codebase.
+
+The core goal is simple: **don't make deployment a pain**. The repo ships four distribution formats so you can pick whatever fits your setup.
+
+## Features
+
+- 🔍 **Auto-detect backend** — Identifies qBittorrent or Transmission on startup, no manual config needed
+- 🌉 **Adapter normalization** — UI never touches backend-specific types; all data flows through a unified model
+- ⚡ **Virtual scrolling** — Powered by `@tanstack/vue-virtual`, handles thousands of torrents without breaking a sweat
+- 🔐 **Secure auth** — qB cookie session; Transmission Basic Auth with automatic 409 Session-Id handshake
+- 📱 **Mobile-responsive** — Tailwind breakpoints + touch-friendly layout
+- 🚀 **Incremental sync** — Uses qBittorrent `sync/maindata` RID to minimize bandwidth
+- 🛡️ **Circuit breaker & backoff** — Exponential retry on failure, auto-resume on reconnect
+
+## Tech Stack
+
+| Layer | Tech |
+|-------|------|
+| Framework | Vue 3 · TypeScript · Vite |
+| Styling | Tailwind CSS · Shadcn Vue |
+| State | Pinia · `shallowRef<Map>` for high-throughput storage |
+| Network | Axios · custom interceptors |
+| Performance | @tanstack/vue-virtual · Fuse.js |
+
+## Getting Started
+
+> **Quickest path (Portable):** Download `portable.html` from [Releases](../../releases/latest), rename it to `index.html`, drop it into your backend's WebUI directory — done. No build step required.
+
+### Docker (Standalone — most stable)
 
 ```bash
+docker run -d \
+  -p 8888:8888 \
+  -e QB_URL=http://your-qbit:8080 \
+  yunfeng86/torrentmix-webui
+```
+
+See [deploy/standalone-service/README.md](deploy/standalone-service/README.md) for full options.
+
+## Deployment
+
+Pick the distribution format that fits your setup:
+
+| Mode | Best for | Artifact |
+|------|----------|----------|
+| **A. Loader** | Drop one file in, auto-update from a release host | `loader.html` |
+| **B. Standalone** | Dedicated port / Docker, multi-instance, most reliable | Docker image / binary |
+| **C. Sidecar** | No extra port; an external process overwrites the WebUI directory | `updater.mjs` |
+| **D. Portable** | Air-gapped / LAN — just download one HTML file | `portable.html` |
+
+### A. Loader
+
+Rename `loader.html` to `index.html` and place it in the backend WebUI directory. On load it fetches `latest.json`, then loads the correct JS/CSS bundle via `manifest.json` (SRI-verified). Future upgrades happen automatically — no file replacement needed.
+
+```
+# Pin to a specific version (optional)
+?ver=0.1.0   or   ?tag=v0.1.0
+```
+
+> ⚠️ This mode inherently trusts the remote script host. Only use it with a release source you control.
+
+### B. Standalone
+
+The WebUI static files and reverse-proxy gateway share the same origin, eliminating CORS issues. Supports managing multiple backend instances.
+
+- Docker: [deploy/standalone-service/](deploy/standalone-service/)
+- Binary: [rust/apps/standalone-service/](rust/apps/standalone-service/)
+
+### C. Sidecar
+
+Periodically fetches `full-dist.zip` from a release host, verifies SHA-256, and extracts it into the target directory.
+
+```bash
+LATEST_URL=https://your-release-host/latest.json \
+TARGET_DIR=/path/to/webui \
+CHECK_INTERVAL_SEC=3600 \
+node deploy/sidecar/updater.mjs
+```
+
+### D. Portable
+
+Download `portable.html` from Releases, rename it to `index.html`, place it in the qBittorrent or Transmission WebUI directory, and refresh.
+
+> ⚠️ Opening via `file://` won't work (browser security restrictions). It must be served by the backend or a reverse proxy.
+
+## Local Development
+
+**Requirements:** Node.js 20+, npm 10+
+
+```bash
+git clone https://github.com/YunFeng86/TorrentMix-WebUI.git
+cd TorrentMix-WebUI
 npm install
 npm run dev
 ```
 
-开发环境默认走 Vite 代理（见 `vite.config.ts`）：
+Vite dev proxy is pre-configured in [vite.config.ts](vite.config.ts):
 
-- qBittorrent: `/api/*` → `http://localhost:8080`
-- Transmission: `/transmission/*` → `http://localhost:9091`
-
-## 构建
-
-```bash
-npm run build
+```
+qBittorrent   /api/*           → http://localhost:8080
+Transmission  /transmission/*  → http://localhost:9091
 ```
 
-说明：
+### Scripts
 
-- 生产构建使用相对 `base`（`./`），因此可部署在子路径（例如 `/transmission/web/`）而不需要重构静态资源路径。
-- 推荐生产环境走“同源反代”，避免 CORS 与 cookie 凭证风险（详见 `.env.example` 注释）。
+```bash
+npm run dev           # Start dev server
+npm run build         # Production build (static assets)
+npm run build:publish # Multi-artifact build for releases
+npm run test          # Run test suite
+npm run lint          # ESLint
+npm run preview       # Preview production build locally
+```
 
-## 分发形态（A/B/C/D）
-
-### A. 智能引导页（Loader）
-
-适用：你想把一个 `index.html` 丢进后端 WebUI 目录里，并且希望“有网就跟随最新版本”。
-
-产物：`loader.html`
-
-- Loader 会去拉取 `latest.json`，再按 `manifest.json` 加载对应版本的 JS/CSS（可带 SRI）。
-- 安全提醒：这条路本质是“信任远端脚本”，建议只用于你自己可控的发布源；别把下载器控制权交给不可审计的 CDN。
-
-### B. 独立服务（Standalone）
-
-适用：你希望一个独立端口，WebUI 静态文件与后端 API 由同一个反代出口提供（最稳）。
-
-目录：`deploy/standalone/`
-
-- `deploy/standalone/Dockerfile`：构建静态资源并用 Caddy 提供服务
-- `deploy/standalone/Caddyfile`：同源反代
-
-运行时需要配置上游（至少一个）：
-
-- `QB_UPSTREAM`：例如 `http://qbittorrent:8080`
-- `TR_UPSTREAM`：例如 `http://transmission:9091`
-
-### C. 侧车模式（Sidecar）
-
-适用：不想暴露额外端口，只想“外部程序定期覆盖后端 WebUI 目录”。
-
-目录：`deploy/sidecar/`
-
-- `deploy/sidecar/updater.mjs`：定期读取 `latest.json`，下载 `full-dist.zip` 校验 sha256 后解压覆盖到 `TARGET_DIR`
-- 环境变量：
-  - `LATEST_URL`：你的 `latest.json` 地址
-  - `TARGET_DIR`：挂载的 WebUI 目录（默认 `/target`）
-  - `CHECK_INTERVAL_SEC`：检查间隔（默认 3600）
-
-### D. 离线单文件（Portable）
-
-适用：安全/内网环境，只想下载 1 个 HTML 文件。
-
-产物：`portable.html`
-
-- 把它改名为 `index.html` 放入后端 WebUI 目录即可使用（同源请求后端 API）。
-- 注意：**直接双击 file:// 打开**通常无法访问后端（浏览器安全限制），正确方式是让它被后端/反代“作为网页”提供。
-
-## 多产物构建（给 CI / 发版用）
+### Release Build
 
 ```bash
 npm run build:publish
 ```
 
-输出目录：`artifacts/publish/`
+Outputs to `artifacts/publish/`:
 
-- `latest.json`：版本仲裁（最新版本指向）
-- `manifest.json`：最新版本的清单（文件哈希 + 入口）
-- `loader.html` / `portable.html`：稳定 URL 版本（始终指向最新）
-- `releases/<version>/...`：带版本号的完整发布目录（含 `full-dist.zip`）
+```
+artifacts/publish/
+├── latest.json              # Version pointer (latest release)
+├── manifest.json            # File hashes + entrypoint
+├── loader.html              # Auto-updating loader (stable URL)
+├── portable.html            # Offline single-file build (stable URL)
+└── releases/
+    └── <version>/
+        ├── full-dist.zip    # Full bundle with SHA-256 checksum
+        └── ...
+```
 
-## CI/CD（GitHub Actions）
+## CI/CD
 
-工作流：`.github/workflows/release.yml`
+Powered by GitHub Actions ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
 
-- 推送 tag（例如 `v0.1.0`）时：
-  - 跑测试/构建
-  - 生成多产物发布目录
-  - 创建 GitHub Release 并上传产物
-  - 同步 `latest.json` + `releases/` 到 `gh-pages` 分支（用于 Pages / CDN 拉取）
+Push a tag (e.g. `v0.1.0`) to trigger:
+
+1. Run tests & build
+2. Generate multi-artifact release directory
+3. Create GitHub Release and upload artifacts
+4. Sync `latest.json` + `releases/<version>/` to the `gh-pages` branch
+
+## Contributing
+
+PRs and issues are welcome! Before submitting:
+
+1. Read [Claude.md](Claude.md) for architecture conventions (Adapter / Network / State / View layer boundaries)
+2. Make sure `npm run lint` and `npm test` pass
+3. Follow [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, etc.)
+4. Include screenshots or GIFs for UI changes
+
+## License
+
+[MIT](LICENSE)

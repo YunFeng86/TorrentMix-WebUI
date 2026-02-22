@@ -1,27 +1,30 @@
-# Standalone（Docker + Caddy）
+# Standalone (Docker + Caddy)
 
-这一形态的核心是“同源反代”：WebUI 静态资源与后端 API 从同一个 Origin 提供，从根上规避 CORS/cookie 凭证坑。
+[中文文档](README.zh-CN.md)
 
-## 构建
+The **Standalone** mode serves the WebUI and proxies backend API requests from the same origin using Caddy — no CORS, no cookie credential leakage.
+
+## Build
 
 ```bash
-docker build -t torrent-webui-standalone -f deploy/standalone/Dockerfile .
+docker build -t torrentmix-standalone -f deploy/standalone/Dockerfile .
 ```
 
-## 运行
+## Run
 
-至少配置一个上游：
+Configure at least one upstream:
 
-- `QB_UPSTREAM`：qBittorrent（例如 `http://qbittorrent:8080`）
-- `TR_UPSTREAM`：Transmission（例如 `http://transmission:9091`）
+| Variable | Example | Description |
+|----------|---------|-------------|
+| `QB_UPSTREAM` | `http://qbittorrent:8080` | qBittorrent instance |
+| `TR_UPSTREAM` | `http://transmission:9091` | Transmission instance |
 
 ```bash
 docker run --rm -p 8080:8080 \
   -e QB_UPSTREAM="http://host.docker.internal:8080" \
-  torrent-webui-standalone
+  torrentmix-standalone
 ```
 
-打开：`http://localhost:8080`
+Open `http://localhost:8080`.
 
-> 提示：Linux 下未必支持 `host.docker.internal`，建议用 Docker Compose 把后端和 WebUI 放在同一个 network。
-
+> **Linux tip:** `host.docker.internal` may not be available on Linux. Use Docker Compose and put both the backend and this container on the same network instead.

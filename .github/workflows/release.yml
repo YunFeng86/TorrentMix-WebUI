@@ -56,13 +56,9 @@ jobs:
           generate_release_notes: true
           # noinspection UndefinedParamsPresent
           files: |
-            artifacts/publish/latest.json
             artifacts/publish/manifest.json
             artifacts/publish/loader.html
             artifacts/publish/portable.html
-            artifacts/publish/releases/${{ steps.meta.outputs.version }}/manifest.json
-            artifacts/publish/releases/${{ steps.meta.outputs.version }}/loader.html
-            artifacts/publish/releases/${{ steps.meta.outputs.version }}/portable.html
             artifacts/publish/releases/${{ steps.meta.outputs.version }}/full-dist.zip
 
       - name: Publish to gh-pages (latest.json + releases/)
@@ -92,9 +88,6 @@ jobs:
           cp -R "../artifacts/publish/releases/${VERSION}" "releases/${VERSION}"
 
           cp "../artifacts/publish/latest.json" "./latest.json"
-          cp "../artifacts/publish/manifest.json" "./manifest.json"
-          cp "../artifacts/publish/loader.html" "./loader.html"
-          cp "../artifacts/publish/portable.html" "./portable.html"
 
           touch .nojekyll
 

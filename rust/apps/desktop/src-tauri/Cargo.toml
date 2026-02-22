@@ -1,0 +1,17 @@
+[package]
+name = "torrentmix-desktop"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1.0.96"
+gateway = { path = "../../../crates/gateway" }
+tauri = { version = "2", features = [] }
+tokio = { version = "1.44.1", features = ["macros", "rt-multi-thread"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+
