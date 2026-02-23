@@ -2,7 +2,7 @@
 
 [中文文档](README.zh-CN.md)
 
-A lightweight sidecar that keeps your backend''s WebUI directory in sync with the latest release. It periodically fetches `latest.json`, downloads `full-dist.zip`, verifies the SHA-256 checksum, and extracts it into the target directory.
+A lightweight sidecar that keeps your backend's WebUI directory in sync with the latest release. It periodically fetches `latest.json`, downloads `dist.zip`, verifies the SHA-256 checksum, and extracts it into the target directory.
 
 ## Environment Variables
 

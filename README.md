@@ -40,7 +40,7 @@ The core goal is simple: **don't make deployment a pain**. The repo ships four d
 
 ## Getting Started
 
-> **Quickest path (Portable):** Download `portable.html` from [Releases](../../releases/latest), rename it to `index.html`, drop it into your backend's WebUI directory — done. No build step required.
+> **Quickest path (Zip):** Download `dist.zip` from [Releases](../../releases/latest), extract it into your backend's WebUI directory — done. No build step required.
 
 ### Docker (Standalone — most stable)
 
@@ -62,7 +62,7 @@ Pick the distribution format that fits your setup:
 | **A. Loader** | Drop one file in, auto-update from a release host | `loader.html` |
 | **B. Standalone** | Dedicated port / Docker, multi-instance, most reliable | Docker image / binary |
 | **C. Sidecar** | No extra port; an external process overwrites the WebUI directory | `updater.mjs` |
-| **D. Portable** | Air-gapped / LAN — just download one HTML file | `portable.html` |
+| **D. Dist (Zip)** | Air-gapped / LAN — download one zip and extract | `dist.zip` |
 
 ### A. Loader
 
@@ -72,6 +72,14 @@ Rename `loader.html` to `index.html` and place it in the backend WebUI directory
 # Pin to a specific version (optional)
 ?ver=0.1.0   or   ?tag=v0.1.0
 ```
+
+You can also pin/unpin a version in the Loader page (stored in `localStorage`). Admins may drop a `config.json` next to `index.html`:
+
+```json
+{ "latestUrl": "https://YOUR.DOMAIN/latest.json", "pinnedVersion": "0.1.0" }
+```
+
+Priority: URL params (`?ver`) > browser pin (`localStorage`) > `config.json`.
 
 > ⚠️ This mode inherently trusts the remote script host. Only use it with a release source you control.
 
@@ -84,7 +92,7 @@ The WebUI static files and reverse-proxy gateway share the same origin, eliminat
 
 ### C. Sidecar
 
-Periodically fetches `full-dist.zip` from a release host, verifies SHA-256, and extracts it into the target directory.
+Periodically fetches `dist.zip` from a release host, verifies SHA-256, and extracts it into the target directory.
 
 ```bash
 LATEST_URL=https://your-release-host/latest.json \
@@ -93,9 +101,9 @@ CHECK_INTERVAL_SEC=3600 \
 node deploy/sidecar/updater.mjs
 ```
 
-### D. Portable
+### D. Dist (Zip)
 
-Download `portable.html` from Releases, rename it to `index.html`, place it in the qBittorrent or Transmission WebUI directory, and refresh.
+Download `dist.zip` from Releases, extract it into the qBittorrent or Transmission WebUI directory, and refresh.
 
 > ⚠️ Opening via `file://` won't work (browser security restrictions). It must be served by the backend or a reverse proxy.
 
@@ -141,10 +149,9 @@ artifacts/publish/
 ├── latest.json              # Version pointer (latest release)
 ├── manifest.json            # File hashes + entrypoint
 ├── loader.html              # Auto-updating loader (stable URL)
-├── portable.html            # Offline single-file build (stable URL)
 └── releases/
     └── <version>/
-        ├── full-dist.zip    # Full bundle with SHA-256 checksum
+        ├── dist.zip         # Offline payload bundle with SHA-256 checksum
         └── ...
 ```
 

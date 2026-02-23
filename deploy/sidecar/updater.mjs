@@ -108,7 +108,7 @@ async function installOnce() {
 
   console.log(`[sidecar] downloading ${zipUrl}`)
   const tmpRoot = '/tmp/webui-sidecar'
-  const zipPath = path.join(tmpRoot, 'full-dist.zip')
+  const zipPath = path.join(tmpRoot, 'dist.zip')
   const extractDir = path.join(tmpRoot, 'extract')
   await ensureDir(tmpRoot)
   await fs.rm(extractDir, { recursive: true, force: true })

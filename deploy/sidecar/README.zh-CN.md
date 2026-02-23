@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-轻量级 sidecar 容器，负责将后端的 WebUI 目录与最新发布版本保持同步。定期拉取 `latest.json`，下载 `full-dist.zip`，校验 SHA-256 后解压到目标目录。
+轻量级 sidecar 容器，负责将后端的 WebUI 目录与最新发布版本保持同步。定期拉取 `latest.json`，下载 `dist.zip`，校验 SHA-256 后解压到目标目录。
 
 ## 环境变量
 

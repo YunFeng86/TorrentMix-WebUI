@@ -35,3 +35,11 @@
   1) 推荐：同源反向代理（例如通过 Nginx/Caddy 把 `/api/*` 与 `/transmission/*` 反代到后端），让 WebUI 与后端 API 走同一个 Origin。
 
   2) 如必须跨域：自行修改 `index.html` 的 CSP `connect-src` 放通目标 Origin（并同时确保后端 CORS/凭证策略安全）。
+
+- 分发产物调整：不再发布 `portable.html`（离线单文件），D 模式核心产物收敛为 `dist.zip`。
+
+  Migration：
+
+  1) 从 Releases 下载 `dist.zip`。
+
+  2) 解压到后端 WebUI 目录（目录根应包含 `index.html`），刷新即可生效。

@@ -58,8 +58,7 @@ jobs:
           files: |
             artifacts/publish/manifest.json
             artifacts/publish/loader.html
-            artifacts/publish/portable.html
-            artifacts/publish/releases/${{ steps.meta.outputs.version }}/full-dist.zip
+            artifacts/publish/releases/${{ steps.meta.outputs.version }}/dist.zip
 
       - name: Publish to gh-pages (latest.json + releases/)
         env:

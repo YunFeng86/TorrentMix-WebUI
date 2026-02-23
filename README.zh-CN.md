@@ -40,7 +40,7 @@
 
 ## 快速开始
 
-> **最快路径（Portable）**：从 [Releases](../../releases/latest) 下载 `portable.html`，改名为 `index.html`，放入后端 WebUI 目录即可。无需任何构建步骤。
+> **最快路径（Zip）**：从 [Releases](../../releases/latest) 下载 `dist.zip`，解压到后端 WebUI 目录即可。无需任何构建步骤。
 
 ### Docker（Standalone 模式，最稳）
 
@@ -62,7 +62,7 @@ docker run -d \
 | **A. Loader**（智能引导页）| 只放一个文件，有网络时自动跟随最新版 | `loader.html` |
 | **B. Standalone**（独立服务）| 独立端口 / Docker，多实例管理，最稳定 | Docker 镜像 / 二进制 |
 | **C. Sidecar**（侧车模式）| 不暴露额外端口，外部程序定期覆盖 WebUI 目录 | `updater.mjs` |
-| **D. Portable**（离线单文件）| 离线 / 内网，下载一个 HTML 文件即可 | `portable.html` |
+| **D. Dist**（离线压缩包）| 离线 / 内网，下载一个 zip 解压即可 | `dist.zip` |
 
 ### A. Loader — 智能引导页
 
@@ -72,6 +72,14 @@ docker run -d \
 # 固定版本（可选）
 ?ver=0.1.0   或   ?tag=v0.1.0
 ```
+
+你也可以在 Loader 页面里“固定/解除”版本（存储于 `localStorage`）。管理员也可在同目录放置 `config.json`：
+
+```json
+{ "latestUrl": "https://YOUR.DOMAIN/latest.json", "pinnedVersion": "0.1.0" }
+```
+
+优先级：URL 参数（`?ver`）> 浏览器固定（`localStorage`）> `config.json`。
 
 > ⚠️ 此方案本质上是信任远端脚本，仅建议用于自己可控的发布源。
 
@@ -84,7 +92,7 @@ WebUI 静态文件与反代网关共享同源出口，彻底规避 CORS 问题�
 
 ### C. Sidecar — 侧车模式
 
-定期从发布源拉取 `full-dist.zip`，校验 SHA-256 后解压覆盖目标目录。
+定期从发布源拉取 `dist.zip`，校验 SHA-256 后解压覆盖目标目录。
 
 ```bash
 LATEST_URL=https://your-release-host/latest.json \
@@ -93,9 +101,9 @@ CHECK_INTERVAL_SEC=3600 \
 node deploy/sidecar/updater.mjs
 ```
 
-### D. Portable — 离线单文件
+### D. Dist — 离线压缩包
 
-从 Releases 下载 `portable.html`，改名为 `index.html`，放入 qBittorrent / Transmission 的 WebUI 目录，刷新即可。
+从 Releases 下载 `dist.zip`，解压到 qBittorrent / Transmission 的 WebUI 目录，刷新即可。
 
 > ⚠️ 不支持 `file://` 直接打开（浏览器安全限制），需由后端或反代作为网页提供。
 
@@ -141,10 +149,9 @@ artifacts/publish/
 ├── latest.json              # 版本仲裁（最新版本指向）
 ├── manifest.json            # 文件哈希 + 入口清单
 ├── loader.html              # 智能引导页（稳定 URL）
-├── portable.html            # 离线单文件（稳定 URL）
 └── releases/
     └── <version>/
-        ├── full-dist.zip    # 完整发布包（含 SHA-256 校验）
+        ├── dist.zip         # 离线 Payload 包（含 SHA-256 校验）
         └── ...
 ```
 

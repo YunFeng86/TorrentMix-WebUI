@@ -269,6 +269,12 @@ function buildLoaderHtml() {
             <button id="loadBtn" type="button">加载</button>
           </div>
 
+          <div class="row">
+            <input id="pinVersion" placeholder="固定版本（例如 0.1.0，可留空）" />
+            <button id="pinBtn" class="secondary" type="button">固定</button>
+            <button id="unpinBtn" class="secondary" type="button">解除</button>
+          </div>
+
           <div class="status" id="status">状态：等待配置</div>
           <div class="err" id="error" style="display:none"></div>
         </div>
@@ -277,12 +283,19 @@ function buildLoaderHtml() {
 
     <script type="module">
       const STORAGE_KEY = 'torrent-webui:latest-url'
+      const PIN_KEY = 'torrent-webui:pinned-version'
+      const CACHE_KEY = 'torrent-webui:cached-manifest'
+      const RELOAD_ONCE_KEY = 'torrent-webui:reload-once'
+      const CONFIG_URL = './config.json'
       const DEFAULT_CANDIDATES = ${JSON.stringify(defaultCandidates)}
 
       const els = {
         input: document.getElementById('manifestUrl'),
         save: document.getElementById('saveBtn'),
         load: document.getElementById('loadBtn'),
+        pin: document.getElementById('pinVersion'),
+        pinBtn: document.getElementById('pinBtn'),
+        unpinBtn: document.getElementById('unpinBtn'),
         status: document.getElementById('status'),
         error: document.getElementById('error'),
       }
@@ -301,17 +314,39 @@ function buildLoaderHtml() {
         els.error.textContent = String(err)
       }
 
-      function pickCandidates() {
+      function normalizePinnedVersion(ver) {
+        const raw = String(ver || '').trim()
+        if (!raw) return ''
+        const v = raw.startsWith('v') ? raw.slice(1) : raw
+        if (!/^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/.test(v)) return ''
+        return v
+      }
+
+      function dedupeStrings(list) {
+        const out = []
+        const seen = new Set()
+        for (const v of list) {
+          const s = String(v || '').trim()
+          if (!s) continue
+          if (seen.has(s)) continue
+          seen.add(s)
+          out.push(s)
+        }
+        return out
+      }
+
+      function pickCandidates(config) {
         const qs = new URLSearchParams(location.search)
         const fromQuery = qs.get('latest') || qs.get('manifest') || ''
-        const saved = localStorage.getItem(STORAGE_KEY) || ''
+        const input = String(els.input?.value || '').trim()
+        const saved = String(localStorage.getItem(STORAGE_KEY) || '').trim()
+        const fromConfig = String(config?.latestUrl || '').trim()
+        const configCandidates = Array.isArray(config?.candidates) ? config.candidates : []
 
         // 默认尝试同目录：在本地静态目录里直接打开 loader.html 也能跑起来
         const defaults = ['./latest.json']
 
-        return [fromQuery, saved, ...DEFAULT_CANDIDATES, ...defaults]
-          .map(s => String(s || '').trim())
-          .filter(Boolean)
+        return dedupeStrings([fromQuery, input, saved, fromConfig, ...configCandidates, ...DEFAULT_CANDIDATES, ...defaults])
       }
 
       async function fetchJson(url, timeoutMs = 3500) {
@@ -326,10 +361,40 @@ function buildLoaderHtml() {
         }
       }
 
-      function normalizePinnedVersion(ver) {
-        const v = String(ver || '').trim()
-        if (!v) return ''
-        return v.startsWith('v') ? v.slice(1) : v
+      async function tryLoadConfig() {
+        const u = new URL(CONFIG_URL, location.href)
+        try {
+          const data = await fetchJson(u.toString(), 300)
+          if (!data || typeof data !== 'object') return null
+          return data
+        } catch {
+          return null
+        }
+      }
+
+      function readCachedManifest() {
+        try {
+          const raw = localStorage.getItem(CACHE_KEY)
+          if (!raw) return null
+          const data = JSON.parse(raw)
+          if (!data || typeof data !== 'object') return null
+          if (!data.manifestUrl || !data.manifest) return null
+          return data
+        } catch {
+          return null
+        }
+      }
+
+      function writeCachedManifest(manifestUrl, manifest) {
+        try {
+          const payload = {
+            version: String(manifest?.version || ''),
+            manifestUrl: String(manifestUrl || ''),
+            manifest,
+            savedAt: new Date().toISOString(),
+          }
+          localStorage.setItem(CACHE_KEY, JSON.stringify(payload))
+        } catch {}
       }
 
       async function resolveManifest(latestUrlOrManifestUrl, pinnedVersion) {
@@ -422,9 +487,20 @@ function buildLoaderHtml() {
         setError('')
 
         const qs = new URLSearchParams(location.search)
-        const pinnedVersion = normalizePinnedVersion(qs.get('ver') || qs.get('version') || qs.get('tag') || '')
+        const config = await tryLoadConfig()
+        if (config?.latestUrl && !localStorage.getItem(STORAGE_KEY) && !(qs.get('latest') || qs.get('manifest'))) {
+          els.input.value = String(config.latestUrl || '').trim()
+        }
+        if (config?.pinnedVersion && !localStorage.getItem(PIN_KEY)) {
+          els.pin.value = normalizePinnedVersion(config.pinnedVersion)
+        }
 
-        const candidates = pickCandidates()
+        const pinnedFromQuery = normalizePinnedVersion(qs.get('ver') || qs.get('version') || qs.get('tag') || '')
+        const pinnedFromStorage = normalizePinnedVersion(localStorage.getItem(PIN_KEY) || '')
+        const pinnedFromConfig = normalizePinnedVersion(config?.pinnedVersion || '')
+        const pinnedVersion = pinnedFromQuery || pinnedFromStorage || pinnedFromConfig
+
+        const candidates = pickCandidates(config)
         if (candidates.length === 0) {
           setStatus('未配置 latest.json；请手动填写并保存')
           return
@@ -432,7 +508,37 @@ function buildLoaderHtml() {
 
         if (pinnedVersion) {
           setStatus('固定版本：' + pinnedVersion + '（探测 CDN）…')
-        } else {
+        }
+
+        // SWR：无固定版本时，优先尝试从本地缓存启动，再后台探测更新。
+        if (!pinnedVersion) {
+          const cached = readCachedManifest()
+          if (cached?.manifestUrl && cached?.manifest) {
+            const cachedVersion = String(cached.version || cached.manifest?.version || 'unknown')
+            setStatus('离线缓存启动：' + cachedVersion)
+            loadAssets(String(cached.manifestUrl), cached.manifest)
+
+            void (async () => {
+              if (sessionStorage.getItem(RELOAD_ONCE_KEY)) return
+              try {
+                for (const url of candidates) {
+                  try {
+                    const { manifest, manifestUrl } = await resolveManifest(url, '')
+                    const nextVersion = String(manifest?.version || 'unknown')
+                    writeCachedManifest(manifestUrl, manifest)
+                    if (nextVersion && cachedVersion && nextVersion !== cachedVersion) {
+                      sessionStorage.setItem(RELOAD_ONCE_KEY, '1')
+                      location.reload()
+                    }
+                    return
+                  } catch {}
+                }
+              } catch {}
+            })()
+
+            return
+          }
+
           setStatus('探测更新源…')
         }
 
@@ -441,6 +547,7 @@ function buildLoaderHtml() {
           try {
             setStatus('读取：' + url)
             const { manifest, manifestUrl } = await resolveManifest(url, pinnedVersion)
+            writeCachedManifest(manifestUrl, manifest)
             setStatus('加载资源：' + (manifest?.version || pinnedVersion || 'unknown'))
             loadAssets(manifestUrl, manifest)
             return
@@ -460,10 +567,26 @@ function buildLoaderHtml() {
         setStatus('已保存，点击“加载”尝试启动')
       }
 
+      function pinVersion() {
+        const v = normalizePinnedVersion(els.pin.value || '')
+        if (!v) return
+        localStorage.setItem(PIN_KEY, v)
+        location.reload()
+      }
+
+      function unpinVersion() {
+        localStorage.removeItem(PIN_KEY)
+        els.pin.value = ''
+        location.reload()
+      }
+
       // 初始化
-      els.input.value = localStorage.getItem(STORAGE_KEY) || DEFAULT_CANDIDATES[0] || ''
+      els.input.value = String(localStorage.getItem(STORAGE_KEY) || DEFAULT_CANDIDATES[0] || '').trim()
+      els.pin.value = String(localStorage.getItem(PIN_KEY) || '').trim()
       els.save.addEventListener('click', saveUrl)
       els.load.addEventListener('click', tryBoot)
+      els.pinBtn.addEventListener('click', pinVersion)
+      els.unpinBtn.addEventListener('click', unpinVersion)
 
       // 自动尝试启动（允许 query 参数覆盖）
       void tryBoot()
@@ -482,7 +605,7 @@ async function buildManifest({ releaseDir, version, name, commit, builtAtIso }) 
     const rel = normalizeRelPath(path.relative(releaseDir, absPath))
     if (!rel) continue
     if (rel === 'manifest.json') continue
-    if (rel === 'full-dist.zip') continue
+    if (rel === 'dist.zip') continue
 
     const buf = await fs.readFile(absPath)
     const sha256b64 = sha256Base64(buf)
@@ -559,26 +682,6 @@ async function main() {
   await ensureEmptyDir(releaseDir)
   await copyDir(DIST_DIR, releaseDir)
 
-  console.log('[publish] generate portable.html…')
-  {
-    const baseHtml = await fs.readFile(path.join(releaseDir, 'index.html'), 'utf8')
-    const { js, css } = await resolveEntryAssets(releaseDir)
-    const cssEntries = css.filter(p => !/^(?:\.\/)?fonts\.css$/i.test(p))
-
-    if (js.length !== 1 || cssEntries.length < 1) {
-      throw new Error(
-        `portable build expects 1 js + >=1 css entry, got js=${js.length}, css=${cssEntries.length}. ` +
-        'Consider disabling code splitting for portable builds.'
-      )
-    }
-
-    const cssText = (await Promise.all(cssEntries.map(p => fs.readFile(path.join(releaseDir, p), 'utf8')))).join('\n')
-    const jsText = await fs.readFile(path.join(releaseDir, js[0]), 'utf8')
-    const portable = buildPortableHtml({ baseHtml, cssText, jsText })
-    await fs.writeFile(path.join(releaseDir, 'portable.html'), portable, 'utf8')
-    await fs.writeFile(path.join(OUT_DIR, 'portable.html'), portable, 'utf8')
-  }
-
   console.log('[publish] generate loader.html…')
   {
     const loader = buildLoaderHtml()
@@ -589,18 +692,16 @@ async function main() {
   console.log('[publish] generate manifest.json…')
   const manifest = await buildManifest({ releaseDir, version, name, commit, builtAtIso })
 
-  console.log('[publish] zip full-dist.zip…')
-  const tmpZip = path.join(OUT_DIR, 'full-dist.zip')
+  console.log('[publish] zip dist.zip…')
+  const tmpZip = path.join(OUT_DIR, 'dist.zip')
   await zipRelease({ releaseDir, outZipPath: tmpZip })
   const zipBuf = await fs.readFile(tmpZip)
   const zipSha256 = sha256Hex(zipBuf)
-  await fs.rename(tmpZip, path.join(releaseDir, 'full-dist.zip'))
+  await fs.rename(tmpZip, path.join(releaseDir, 'dist.zip'))
 
   console.log('[publish] write latest.json…')
-  const portableBuf = await fs.readFile(path.join(releaseDir, 'portable.html'))
-  const portableSha256 = sha256Hex(portableBuf)
   const latest = {
-    schema: 1,
+    schema: 2,
     name,
     channel: CHANNEL,
     version,
@@ -612,10 +713,8 @@ async function main() {
       path: `releases/${version}/`,
       manifest: 'manifest.json',
       loader: 'loader.html',
-      portable: 'portable.html',
-      distZip: `releases/${version}/full-dist.zip`,
+      distZip: `releases/${version}/dist.zip`,
       distZipSha256: zipSha256,
-      portableSha256,
     },
   }
   await fs.writeFile(path.join(OUT_DIR, 'latest.json'), JSON.stringify(latest, null, 2) + '\n', 'utf8')
@@ -625,7 +724,7 @@ async function main() {
 
   console.log('[publish] done')
   console.log(`- ${path.relative(ROOT, OUT_DIR)}`)
-  console.log(`- releases/${version}/full-dist.zip sha256=${zipSha256}`)
+  console.log(`- releases/${version}/dist.zip sha256=${zipSha256}`)
 }
 
 await main()
